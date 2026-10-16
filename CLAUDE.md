@@ -23,7 +23,7 @@ Peepo is a guitar pedal built on a Raspberry Pi 5 (2 GB, Debian 12 arm64) runnin
 - **Controls arrive once per audio block.** Smooth every control that changes sound (Level, Repeats, Scan, Spread), or it zippers. Size changes by crossfading two read positions, not by gliding (gliding bends pitch).
 - **Unpatched inputs read silence.** A plugin can't tell whether a port is connected; don't guess.
 - **No LV2 state for buffers.** The memory is lost when a patch reloads. That is accepted.
-- **Bypass** comes through an `lv2:enabled` port; Discipline needs it for COLLECT, ALWAYS and TRAILS.
+- **Bypass** comes through an `lv2:enabled` port; Discipline needs it for COLLECT, ALWAYS and TRAILS. Ingen's own block bypass never calls `run()`, so Peepo's overlay marks Discipline `"bypass": "port"`: bypass then sets that port to 0 and leaves the block running.
 - Everything a user sets (switches, modes) is a control port, so patches save it.
 
 ## Rules
@@ -31,6 +31,7 @@ Peepo is a guitar pedal built on a Raspberry Pi 5 (2 GB, Debian 12 arm64) runnin
 - Plugin URI: `https://github.com/ABustos2606/discipline#...`. Never use Peepo's namespace. Don't change a URI or port symbol once a patch has been saved with it.
 - Never use "Habit" or "Chase Bliss" in plugin names, port names, descriptions or code identifiers. Describe it as a delay with a memory.
 - Port names and descriptions appear on Peepo's small screen: short, plain ASCII (its font draws other characters as boxes), and they say what the control does, never who made it.
+- License: MIT, `Copyright (c) 2026 Alejandro Bustos`. Every source file, header, Makefile and `.ttl` file starts with `SPDX-License-Identifier: MIT`; both plugins declare `doap:license <https://spdx.org/licenses/MIT>`.
 - Line endings are LF. Files go to Linux and the Pi.
 - Use Peepo's name, never "Pedal PI", in new text.
 

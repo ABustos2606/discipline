@@ -8,7 +8,7 @@ This plan says how to build Discipline: code layout, ports, signal flow, how the
 
 Four facts from Ingen's source shape the design. The spec doesn't mention them.
 
-1. **Engine bypass does not run the plugin.** `BlockImpl::process` (`src/server/BlockImpl.cpp:230`) calls `bypass()` when a block is disabled. That copies audio input *n* to audio output *n* and CV input *n* to CV output *n*, and never calls `run()`. Peepo's software bypass sets `ingen:enabled false` on the block (Peepo `docs/15-ingen-adapter.md`). With that bypass Discipline can't keep recording (ALWAYS), let echoes ring (TRAILS) or keep its memory while bypassed (COLLECT). **So Peepo must bypass Discipline through its `lv2:enabled` port, never through the block** (see [Peepo-side work](#11-peepo-side-work)). Ingen gives that port no special treatment: it is a normal control.
+1. **Engine bypass does not run the plugin.** `BlockImpl::process` (`src/server/BlockImpl.cpp:230`) calls `bypass()` when a block is disabled. That copies audio input *n* to audio output *n* and CV input *n* to CV output *n*, and never calls `run()`. Peepo's software bypass sets `ingen:enabled false` on the block (Peepo `docs/15-ingen-adapter.md`). With that bypass Discipline can't keep recording (ALWAYS), let echoes ring (TRAILS) or keep its memory while bypassed (COLLECT). **So Peepo must bypass Discipline through its `lv2:enabled` port, never through the block.** Peepo now does this for any plugin its overlay marks `"bypass": "port"` (see [Peepo-side work](#11-peepo-side-work)). Ingen gives that port no special treatment: it is a normal control.
 2. **`run()` is called in slices.** In the same function, Ingen splits each period at every control value change and calls `run()` once per slice. A 128-frame period can arrive as runs of 37 and 91 frames. Nothing may assume one `run()` per period or a fixed `n_samples`. Smoothers advance per sample, not per call.
 3. **Blocks run on several threads.** `threads` defaults to the number of cores (`src/Configuration.cpp:90`), which is 4 on the Pi. Blocks with no path between them can run at the same moment. Discipline and Discipline Return must share data through lock-free single-writer structures. When send is patched to return, Ingen's ordering puts Discipline first in the period. When they aren't connected, there is no order.
 4. **Block length.** Ingen sets `bufsz:maxBlockLength` and `bufsz:nominalBlockLength` to the period (`src/server/LV2Options.hpp`). Discipline reads `nominalBlockLength` (falling back to `maxBlockLength`, then 128) to work out the return delay. It needs no other host features. `urid:map` is required only to read options; `options:options` is optional.
@@ -16,7 +16,7 @@ Four facts from Ingen's source shape the design. The spec doesn't mention them.
 ## 2. Technology and build
 
 - **Plain LV2 C API in C++17, no DPF.** Both plugins must live in **one shared object**, so that they can share a pair registry through static storage. DPF builds one binary per plugin, so sharing would need a third library. The raw API is about 100 lines of glue for two descriptors.
-- **Dependencies:** `lv2-dev` headers only (ISC license), so the license choice stays open. No Boost, no libsndfile in the plugin. The test tools may use a small WAV writer of their own.
+- **License:** MIT. **Dependencies:** `lv2-dev` headers only (ISC license), which MIT allows. No Boost, no libsndfile in the plugin. The test tools may use a small WAV writer of their own.
 - **One binary, `discipline.so`**, in `discipline.lv2/` beside `manifest.ttl`, `discipline.ttl` and `discipline_return.ttl`.
 - **Makefile**, no configure step, no network:
     - `make` builds `build/discipline.lv2/`;
@@ -31,7 +31,7 @@ Four facts from Ingen's source shape the design. The spec doesn't mention them.
 
 ```
 Makefile
-LICENSE                      (milestone 0)
+LICENSE                      MIT text (milestone 0)
 README.md                    what it is, build, install, the pair in one picture
 discipline.lv2/
     manifest.ttl             both plugins, one binary
@@ -388,7 +388,7 @@ Each has an end check. "Done" means the offline tests pass on x86-64 and arm64, 
 
 ### Milestone 0 — scaffolding
 
-- Choose the license (spec checklist). LV2 headers are ISC and there are no other dependencies, so any license works. Add `LICENSE` and SPDX headers.
+- License: MIT (chosen 16 October 2026). Add `LICENSE` with the standard MIT text and the line `Copyright (c) 2026 Alejandro Bustos`. Put `SPDX-License-Identifier: MIT` at the top of every source file, header, Makefile and `.ttl` file, and declare `doap:license <https://spdx.org/licenses/MIT>` on both plugins in the `.ttl` files (`lv2lint` checks it).
 - Makefile, both descriptors, both `.ttl` files with **the full port list of section 3**, `ports.hpp`, and the `ttl_check` test.
 - Discipline passes input to output and outputs silence on Send. Return claims its slot.
 - **Done when:** `make`, `make install DESTDIR=…` and `lv2lint` are clean, and both plugins load in jalv and in Ingen under WSL. Tag `v0.0.1`, so Peepo can wire its build step early.
@@ -411,7 +411,7 @@ Each has an end check. "Done" means the offline tests pass on x86-64 and arm64, 
 3. Collect with its own `loop_gain`.
 4. Loop and Latch.
 5. Memory dry (three modes), Wipe, Dry kill.
-6. Bypass through `enabled`: ALWAYS, COLLECT, TRAILS (needs Peepo's port bypass, section 11).
+6. Bypass through `enabled`: ALWAYS, COLLECT, TRAILS (in Peepo, through the overlay's `"bypass": "port"`, section 11).
 - **Done when:** `scan_clamp`, `scan_snap`, `auto_scan`, `loop`, `bypass` and `cv` pass. There has been a listening session on the Pi with a guitar, and a Pi xrun check. Tag `v0.2.0`. Expect several `v0.2.x` tags of tuning after this.
 
 ### Milestone 3 — clock and modifiers (spec milestone 3)
@@ -426,8 +426,9 @@ Each has an end check. "Done" means the offline tests pass on x86-64 and arm64, 
 
 These are in Peepo's repository, not here. They are listed so the plugin doesn't wait on them unexpectedly.
 
-1. **Bypass through the port.** Peepo's catalogue export treats a control named `enabled`, or one with `lv2:designation lv2:enabled`, as the module's on/off switch: it keeps it at 1 and uses the engine's block bypass (`tools/export_lv2_catalogue.py:67`, Peepo `docs/16-catalogue-export.md`). For Discipline it must do the opposite: software bypass sets the `enabled` port, and the block stays enabled. That means an overlay flag, for example `"bypass": "port"`, honoured by the adapter's bypass command, by stomp bypass assignments and by saved patches. It is needed before milestone 2's bypass work can be checked in Peepo.
+1. **Bypass through the port. Done in Peepo.** Peepo's catalogue export treats a control named `enabled`, or one with `lv2:designation lv2:enabled`, as the module's on/off switch (`tools/export_lv2_catalogue.py:67`). By default it keeps that switch at 1 and uses the engine's block bypass. An overlay rule with `"bypass": "port"` reverses this: software bypass, stomp bypass and saved patches set the plugin's switch to 0, and the block stays enabled (`ingen:enabled` is never set false). A copy keeps the bypass, and a module whose switch reads 0 is shown as bypassed. Peepo refuses the rule for a plugin with no such switch, so Discipline's `enabled` port must keep its symbol or its `lv2:enabled` designation. `"bypass": "engine"` gives the usual behaviour back. See Peepo `docs/16-catalogue-export.md` ("A plugin that bypasses itself") and `docs/15-ingen-adapter.md`; the tests use a stand-in plugin, so milestone 2 still has to check it with Discipline in Ingen.
 2. **Overlay entry** (`config/catalogue/overlay.json`). Name "Discipline", category Delay. Description, for example: "Delay with a 3-minute memory. Cable Send to a Discipline Return, through any modules." Then:
+    - `"bypass": "port"` (item 1);
     - `"tempo": "bpm"`;
     - `size_beats` with unit `beats`;
     - enum choices for `scan_mode`, `routing`, `memory_dry` and `dry_kill`;
@@ -447,7 +448,7 @@ These are in Peepo's repository, not here. They are listed so the plugin doesn't
 | Dry kill's three states | The spec lists TRUE and SERIES; whether "off" is a third position on the hardware or a separate switch needs checking against pp. 40 – 43 | Milestone 2 |
 | Peepo CV range | Sets how CV adds to knobs (section 3) | Milestone 1 |
 | Return with no outputs in Peepo | Might need a silent pass-through port | Milestone 0 |
-| Peepo bypass via the port | ALWAYS / COLLECT / TRAILS can't work through engine bypass | Before milestone 2 is checked on Peepo |
+| Peepo bypass via the port | ALWAYS / COLLECT / TRAILS can't work through engine bypass. Settled in Peepo by `"bypass": "port"` (section 11); still to be checked with the real plugin | Milestone 2, in Ingen under WSL and on the Pi |
 | Memory at high sample rates | Two instances at 96 kHz are 460 MB | Note it in the README; Peepo runs at 48 kHz |
 | Sound tuning | Curves, fades, limiter, auto-scan feel: months, per the spec | `v0.2.x` and later, via `tools/render` and listening on the Pi |
 | Modifier ports | Appending ports later is safe for Ingen (it saves by symbol) but bumps the minor version | Milestone 3 |

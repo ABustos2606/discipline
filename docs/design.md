@@ -11,7 +11,7 @@ Discipline has its own repository, outside Peepo:
 - Every other plugin Peepo runs is built from another repository at a pinned commit. Discipline is built the same way.
 - It is a normal LV2 bundle, so it can be tested on a desktop without Ingen or the Pi.
 - It has its own build (Makefile, and DPF if used), apart from Peepo's CMake and LVGL build.
-- Its license is chosen separately from Peepo's GPLv3.
+- Its license is MIT (chosen 16 October 2026), separate from Peepo's GPLv3. Peepo can still build and ship it, since MIT is compatible with the GPL.
 - Sound tuning will take months. Tagged releases let Peepo update to a new version on purpose.
 
 What stays in Peepo:
@@ -118,7 +118,7 @@ Checked on 16 October 2026 against the Chase Bliss Habit manual (Peepo's `refere
 
 ## Milestones
 
-- [ ] Choose the license.
+- [x] Choose the license: MIT.
 - [ ] Milestone 1: the Discipline and Discipline Return pair, the shared memory, a separate echo loop, Size changes by crossfade, IN / OUT / FEED routing of the return, a Clear that can't cause xruns, and the `.ttl` files with CV inputs.
 - [ ] Milestone 2: Collect, Scan AUTO and MANUAL with Size-locked positions, Spread, Loop, Memory Dry and Wipe, and bypass behaviour (`lv2:enabled`, ALWAYS, TRAILS).
 - [ ] Milestone 3: a Size clock output, then decide which modifiers (Speed, Trimmer, Dropper) to build in.
