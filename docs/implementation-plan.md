@@ -127,7 +127,7 @@ Enums use `lv2:integer`, `lv2:enumeration` and `lv2:scalePoint`, counting from 0
 
 The Return has no audio output. Check in milestone 1 that Peepo's canvas and catalogue export accept a module with no outputs. If they don't, add a silent `thru` pair of outputs (appending ports is allowed; renaming is not).
 
-Both plugins declare `lv2:hardRTCapable` and `lv2:optionalFeature options:options`. Discipline requires `urid:map`. Return requires nothing. The class is `lv2:DelayPlugin`. The Return is `lv2:UtilityPlugin`, so the catalogue doesn't list it as a second delay.
+Both plugins declare `lv2:hardRTCapable` and `lv2:optionalFeature options:options`. Discipline requires `urid:map`. Return declares it optional and requires nothing. The class is `lv2:DelayPlugin`. The Return is `lv2:UtilityPlugin`, so the catalogue doesn't list it as a second delay.
 
 ## 4. The pair
 
@@ -162,7 +162,7 @@ struct PairSlot {
 
 The Return writes each slice of its input into `ring` at index `written mod kReturnRing`, then publishes `written += n` with release ordering. Discipline reads the return at its own index `r` minus a fixed lag `B`, where `B` is the nominal block length.
 
-- **Alignment.** `main_frames` is an exclusive end. Return starts at `floor((main_frames - 1) / B) * B`, with startup protected against underflow. This gives the current period's start whether main's first call was a full period or just a slice. On a main claim, the persistent slot timeline rounds up to a block boundary, so a previous owner's different block size does not offset the new pair. Zero-frame runs do not establish Return timing. In the patched case, send in period *k* returns in *k + 1*, exactly `B` frames later.
+- **Alignment.** `main_frames` is an exclusive end. Return starts at `floor((main_frames - 1) / B) * B`, plus its local phase within the period, with startup protected against underflow. This gives the current period's start whether main's first call was a full period or just a slice. On a main claim, the persistent slot timeline rounds up to a block boundary and adds the main's local block phase, so a previous owner's different block size does not offset the new pair and mid-period changes preserve timing. Zero-frame runs do not establish Return timing. In the patched case, send in period *k* returns in *k + 1*, exactly `B` frames later.
 - **Unpatched or reversed order.** The raw return delay can be another constant. A reversed-order cable supplies the previous Send block. Atomic tags keep any overlapping access safe, including a peer that runs far ahead.
 - **Stale return.** For each sample, main checks the published epoch, 64-bit write range and cell stamp. Missing frames fade out using the last valid sample over 64 frames. After 0.5 s of missing data `paired` becomes 0. New data fades back in. Return also detects a stopped main.
 - **Slices and recovery.** Both sides count samples, independent of slice boundaries. A Return that resumes after missing a period must resync: otherwise its write counter remains behind forever. A gap beyond the normal one-block lead, or a writer over half the ring ahead, bumps the epoch and realigns. This is bounded work, with no ring clear or retry loop.
@@ -175,7 +175,7 @@ Per sample, stereo. `M` is the memory, `E` the echo line, `ret` the return read 
 
 ```
                 ┌─────────────────────── MEMORY M (180 s, always recording) ─┐
-in ─┬─────────▶ write: in + collect·M[w] (+ FEED: rep·ret)  (soft limit on recirculating part only)
+in ─┬─────────▶ write: in + collect·M[w] (+ FEED: rep·ret)  (limit recirculating parts only)
     │           read:  p = M[w - scan]      s = M[w - scan - spread]
     │                  mem = p + spread_on·s     (equal-power mix when Spread is on)
     │                                │
@@ -192,11 +192,15 @@ in ─┬─────────▶ write: in + collect·M[w] (+ FEED: rep·
 out = dry_gain·in + level·wet·(1 - wipe) + mdry_gain·mem
 ```
 
+Feed takes Return before Level and Wipe. Memory dry is playback only. Bypass
+scales the output and cuts the echo input as in 6.10; Loop's routing exception
+is described in 6.9.
+
 The rule that makes the three routings simple: **the echo you hear is always the return**. The send always carries the echo tap. Only the place the return is fed back into changes:
 
 - **IN.** The return is the echo's feedback, so patched modules act again on every repeat (the main Modify sound).
 - **OUT.** The echo feeds back on itself, unprocessed. The modules process each repeat once on the way out, so every repeat sounds the same.
-- **FEED.** The echo has no internal feedback. The return is written into the memory, scaled by Repeats, and comes back round through the read positions. Repeats then sets the feedback of the whole system, as in the manual. Two nested loops each at Repeats would exceed unity gain once Repeats > 0.5. The send carries the wet signal only (echo plus memory dry), never the dry input, which the memory already records.
+- **FEED.** The echo has no ordinary internal feedback. Repeats times Return enters memory through the Feed limiter, independently of Level, Wipe and memory dry. Send carries only the echo tap. Memory dry is playback only; Collect provides its overdubbing. Live dry is excluded because memory already records it. This restores Milestone 1's return-only feedback after the Milestone 2 audit rejected the added one-block memory-dry path and Level coupling.
 
 The spec takes it as given that the user always patches send to return. Without that, no echo is heard in any routing. The README and the Peepo module description say so.
 
@@ -226,8 +230,8 @@ The same trick makes startup clean. `valid_from` starts at 0, so nothing older t
 
 ### 6.3 Smoothing
 
-- **Gains** (Level, Repeats, dry, memory dry, wipe, bypass mix): one-pole, about 10 ms (**tune**), advanced per sample. A slice boundary only changes the target.
-- **Scan and Spread:** a **slew-limited glide** in samples of offset. The read position moves at most `±max_scrub` frames per frame (start: 1.0, which means playback between stopped and double speed while moving). Movement is audible as scrubbing. The spec wants that ("cloudy"), so it isn't crossfaded away. Large jumps (the auto-scan snap back to the present, 6.6) use a crossfade instead.
+- **Gains:** Level, Repeats, routing and Collect use 10 ms one-poles; Memory dry uses 50 ms. Dry kill, Wipe, bypass and echo input use 10 ms linear ramps with exact endpoints. Loop enters over 10 ms and releases over 50 ms. Every envelope advances per sample; a slice boundary only changes its target.
+- **Scan and Spread:** a local scrub at up to 0.5 frame per sample, limited to 10 ms of history (at most 20 ms of scrubbing), accompanies a 60 ms crossfade to a large move's destination. Both outgoing and incoming audio scrub briefly. Targets coalesce during a fade, so an isolated or last pending move settles within 120 ms, below the 150 ms requirement. Snap-backs use 30 ms. Complementary raised-cosine weights avoid boosting correlated audio. The audit rejected full-distance gliding because a three-minute offset took six minutes to reach.
 - **Size:** never glides, always crossfades (6.4).
 - **Denormals.** Every feedback path flushes values below 1e-15 to 0. Discipline doesn't change the thread's FTZ/FPCR flags: they belong to the host thread.
 
@@ -254,20 +258,20 @@ The echo's feedback reads the same crossfaded tap, so the loop length changes wi
 
 The scan offset `S` (frames behind the present) comes from one of three sources:
 
-- **MANUAL:** `S = scan · (memory length - margin)`, snapped to a multiple of Size (6.8), then glided (6.3). Scan 0 is the present.
+- **MANUAL:** `S = scan · (memory length - margin)`, snapped to a multiple of Size (6.8), then reached with the bounded transition in 6.3. Scan 0 is the present.
 - **AUTO:** the `auto_scan` state machine:
     - **Present.** At each Size boundary (from the clock, 6.11) roll `rng` against `p_jump(scan)`. Start: 0 at scan 0, rising to 1 at scan 1 (**tune**).
-    - **Jump.** Pick a target depth: a whole number of Sizes, from 1 to `depth_max(scan)` (start: scan² × memory length, **tune**). Glide there, so the scrub is heard.
+    - **Jump.** Pick a target depth: a whole number of Sizes, from 1 to `depth_max(scan)` (start: scan² × memory length, **tune**). Reach it using the bounded scrub/crossfade in 6.3; Away begins after the transition completes.
     - **Away.** Stay for 1 – 4 echoes (random, **tune**), then go back to Present: crossfade (30 ms) from the scanned read position to the present position. That is the "snap back".
     - At scan = 1, `p_jump` is 1 and the hold is endless, so it never comes back to the present: "scans all the time".
-- **Scan hold** (momentary scan) forces the AUTO machine to behave as at scan = 1 while held, whatever the mode. On release it snaps back.
+- **Scan hold** (momentary scan) forces the AUTO machine to behave as at scan = 1 while held, whatever the mode. Pressing it starts an excursion immediately, including at long Size settings. On release it crossfades to the current snapped Manual target in Manual mode, or the present in Auto. State resets preserve the random stream; instances receive distinct seeds during instantiation, while tests can supply explicit repeatable seeds.
 - **Scan CV** adds to the knob before either mode reads it.
 
-Crossfades between two memory read positions use a second read head, like 6.4. So the memory has up to four interpolated reads per sample: primary, spread, and the fade partner of each. That costs about 32 multiply-adds per sample.
+Crossfades between two memory read pairs use complementary weights, unlike the echo's equal-power Size fades in 6.4. Memory has up to four interpolated reads per sample: primary, spread, and a fade partner for each. The fractional segment next to the present uses linear interpolation because the fourth Hermite sample has not been written yet.
 
 ### 6.7 Spread
 
-The second read position is `S + P`, where `P = spread · (memory length - S - margin)`, snapped to a multiple of Size and glided. Spread 0 turns it off with a 10 ms fade, not a cut. With Spread on, the two positions are mixed at `0.707` each (**tune**). The spread position moves with Scan, as the manual says, because it is defined relative to `S`.
+The second read position is `S + P`, where `P = spread · (memory length - S - margin)`, snapped to a multiple of Size. Spread is off whenever snapped P is zero, regardless of the raw knob value. Position changes use 6.3's bounded transition. With Spread on, the two positions are mixed at `0.707` each (**tune**). The spread position moves with Scan because it is relative to `S`. Scanning memory dry omits a present-time primary rather than adding it to live dry again.
 
 ### 6.8 Clamping and snapping
 
@@ -279,14 +283,16 @@ The second read position is `S + P`, where `P = spread · (memory length - S - m
 
 - **Loop on:** the echo line's input is muted (`e_in` × 0, faded over 10 ms), and its feedback is forced to exactly 1.0 with `loop_gain` bypassed, so the content recirculates unchanged. The memory keeps recording. The user can play over it: the dry signal is unaffected.
 - In **IN**, the loop runs through the return, so modules keep acting on it. That is the patched equivalent of the hardware, and it is allowed.
+- In **FEED**, Loop uses the internal full-Size feedback, like OUT, while the memory keeps recording. Without this exception, muting the echo input would erase the held echo because ordinary FEED has no echo feedback.
 - Size changes crossfade as in 6.4. The loop keeps its contents but its length changes, so it is never erased.
 - **Loop off:** feedback fades back to Repeats over 50 ms.
 - **Latch:** with Latch off, Loop is active while the port is 1 (Peepo's momentary stomp). With Latch on, each rising edge flips an internal state.
 
 ### 6.10 Memory dry, Wipe, Dry kill and bypass
 
-- **Memory dry:** `mdry_gain` is 0 (Off), 1 (On), or for Scanning, 1 while `S` or `P` is moving or away from the present (auto-scan Away, a glide in progress, Spread on), faded over 50 ms. When Scan and Spread are at 0 the memory read equals the dry input, so Scanning stays silent and doesn't double the dry signal.
+- **Memory dry:** Off is silent. On monitors the full memory mix. Scanning monitors historical contributions only, with the present primary omitted, and fades over 50 ms. A short taper when a head leaves/reaches the present avoids a discontinuity. A raw Spread value that snaps to zero cannot activate it. Explicit On can double live dry at the present; Dry kill is available for memory-only playback.
 - **Wipe:** the echo (`wet`) is muted and Memory dry is forced to On.
+- Feed still records Return while Wipe is on; processed audio can therefore be heard later through memory playback. Wipe does not create a separate memory feedback path.
 - **Dry kill:** Off passes dry. Always (TRUE) never passes dry, even when bypassed. Effect on (SERIES) mutes dry only while the effect is on.
 - **Bypass** (the `enabled` port, 1 → 0; 10 ms crossfade on the output):
 
@@ -298,6 +304,12 @@ The second read position is `S + P`, where `P = spread · (memory length - S - m
 
 When it is switched back on, nothing jumps: positions are relative to `mem_frames`, which was either paused or kept running.
 
+Without Trails, bypass fades wet to zero and logically invalidates the echo
+before fading it back in, even if the effect is re-enabled during that fade.
+Old Return samples are excluded at that boundary. With Trails, held or latched
+Loop releases over 50 ms to ordinary Repeats; maximum Repeats can still sustain
+unity feedback, as it can during normal use.
+
 ### 6.11 Tempo and the Size clock
 
 - Size in beats = `size_beats × 60 / bpm` s, clamped to 50 ms – 60 s. A BPM change is a Size change, so it crossfades.
@@ -306,6 +318,7 @@ When it is switched back on, nothing jumps: positions are relative to `mem_frame
 ### 6.12 Output and safety
 
 - A final finite check per slice: if any output sample is NaN or infinite (a module in the loop can produce that), Discipline resets the echo line's feedback state, writes silence for that slice and raises an internal flag. It doesn't throw or log in `run()`. Ingen must never receive a non-finite value (Peepo's catalogue withholds plugins that output one).
+- Non-finite live input is zeroed only at the affected channel/sample. It does not trigger the feedback fault reset or erase the rest of the slice.
 - Return audio passes through `loop_gain`'s ceiling before it reaches the memory or the echo, so a module with heavy gain can't overload the buffers.
 - Level: Peepo applies its general Output after the plugin (`peepo:outputLevel`), so Discipline has no output trim of its own.
 
@@ -426,7 +439,7 @@ Ingen at 128 and 1024 frames, with one and four threads, passes exact echo
 timing/decay in every routing, BPM sync, a filter return path, feedback rejection
 and save/reload with empty audio buffers. See [the validation record](milestone-1-validation.md).
 The physical Pi xrun check, listening, release tag and Peepo integration remain
-release follow-up; Milestone 2's controls are still inert.
+release follow-up. Milestone 2's controls are implemented below.
 
 ### Milestone 2 — memory features (spec milestone 2)
 
@@ -437,6 +450,16 @@ release follow-up; Milestone 2's controls are still inert.
 5. Memory dry (three modes), Wipe, Dry kill.
 6. Bypass through `enabled`: ALWAYS, COLLECT, TRAILS (in Peepo, through the overlay's `"bypass": "port"`, section 11).
 - **Done when:** `scan_clamp`, `scan_snap`, `auto_scan`, `loop`, `bypass` and `cv` pass. There has been a listening session on the Pi with a guitar, and a Pi xrun check. Tag `v0.2.0`. Expect several `v0.2.x` tags of tuning after this.
+
+**Implementation status, 16 October 2026:** memory controls and their offline
+and Ingen checks are implemented. Following the Milestone 2 audit and user
+decisions, bounded scrub/crossfade moves replace full-distance glides, Feed is
+return-only and independent of Level, and the smaller audit findings have
+dedicated audio regressions. The three earlier audit corrections
+are included: Pair claims preserve the local block phase on both sides;
+non-finite live input is zeroed per channel without resetting the echo; Return
+declares optional `urid:map`. See [the validation record](milestone-2-validation.md)
+for results and the remaining physical Pi/listening/release gates.
 
 ### Milestone 3 — clock and modifiers (spec milestone 3)
 
@@ -469,10 +492,10 @@ These are in Peepo's repository, not here. They are listed so the plugin doesn't
 | Item | Why it matters | When to settle |
 |---|---|---|
 | Default routing | The manual describes the routings but does not prescribe a default. Keep the published project default, In (0). | Settled for Milestone 1 |
-| Dry kill's three states | The spec lists TRUE and SERIES; whether "off" is a third position on the hardware or a separate switch needs checking against pp. 40 – 43 | Milestone 2 |
+| Dry kill's three states | Preserve published Off/default; Always and Effect on implement the manual's TRUE and SERIES behavior. All three are checked enabled and bypassed. | Settled for Milestone 2 |
 | Peepo CV range | AMS tempo LFO has unipolar and bipolar modes; Marbles emits 0-0.4, 0-1 or -1-1. Add normalized CV and clamp; existing CV utilities handle depth. | Checked in source for Milestone 1; see validation record |
 | Return with no outputs in Peepo | Might need a silent pass-through port | Milestone 0 |
-| Peepo bypass via the port | ALWAYS / COLLECT / TRAILS can't work through engine bypass. Settled in Peepo by `"bypass": "port"` (section 11); still to be checked with the real plugin | Milestone 2, in Ingen under WSL and on the Pi |
+| Peepo bypass via the port | ALWAYS / COLLECT / TRAILS can't work through engine bypass. Peepo uses `"bypass": "port"` (section 11). Real-plugin enabled-port checks pass in Ingen under WSL with one and four threads, at 128/1024 frames. | Physical Pi check pending |
 | Memory at high sample rates | Two instances at 96 kHz are 460 MB | Note it in the README; Peepo runs at 48 kHz |
 | Sound tuning | Curves, fades, limiter, auto-scan feel: months, per the spec | `v0.2.x` and later, via `tools/render` and listening on the Pi |
 | Modifier ports | Appending ports later is safe for Ingen (it saves by symbol) but bumps the minor version | Milestone 3 |

@@ -19,7 +19,7 @@
     doap:homepage <https://github.com/ABustos2606/discipline> ;
     rdfs:comment "Delay with a 3-minute memory. Cable Send to a Discipline Return through any modules. Size sets echo time; Routing sets where the return feeds back." ;
     lv2:minorVersion 1 ;
-    lv2:microVersion 0 ;
+    lv2:microVersion 1 ;
     lv2:optionalFeature lv2:hardRTCapable, options:options ;
     options:supportedOption bufsz:nominalBlockLength, bufsz:maxBlockLength ;
     lv2:requiredFeature urid:map ;

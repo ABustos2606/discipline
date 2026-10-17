@@ -66,8 +66,10 @@ bool read_return(const PairSlot& slot, uint32_t epoch, uint64_t frame, dsp::Fram
 
 void ReturnWriter::write(PairSlot* slot, const float* left, const float* right, uint32_t frames, uint32_t fallback_block) noexcept
 {
-    if (!slot) { reset(); return; }
     if (!frames) { return; } // Zero-frame host calls must not establish timing.
+    const uint64_t local = clock_;
+    clock_ += frames;
+    if (!slot) { slot_ = nullptr; return; }
     uint32_t epoch = slot->epoch.load(std::memory_order_acquire);
     const uint64_t main = slot->main_frames.load(std::memory_order_acquire);
     const uint32_t block = slot->owner_main.load(std::memory_order_acquire) ?
@@ -80,7 +82,7 @@ void ReturnWriter::write(PairSlot* slot, const float* left, const float* right, 
         epoch_ = epoch;
         // main_frames is an exclusive end. This also works if main's first
         // run was just a slice of a period, rather than its full block.
-        frame_ = ((main ? main - 1 : 0) / block) * block;
+        frame_ = ((main ? main - 1 : 0) / block) * block + local % block;
         slot->written_epoch.store(0, std::memory_order_release);
     }
     for (uint32_t i = 0; i < frames; ++i, ++frame_) {

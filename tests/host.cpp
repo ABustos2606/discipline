@@ -52,6 +52,7 @@ Instance::Instance(const LV2_Descriptor* d, double rate, uint32_t size, bool ret
         control(discipline::MainPort::size_beats) = 1;
         control(discipline::MainPort::bpm) = 120;
         control(discipline::MainPort::enabled) = 1;
+        control(discipline::MainPort::memory_dry) = 1;
         control(discipline::MainPort::pair) = 1;
     }
     slice(0, 0); activate();

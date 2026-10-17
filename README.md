@@ -3,15 +3,15 @@
 An LV2 stereo delay with a 3-minute memory, written for Peepo and other LV2
 hosts. MIT licensed, Copyright (c) 2026 Alejandro Bustos.
 
-Milestone 1 implements the stereo delay core: 50 ms to 60 s echoes, Repeats,
+Milestones 1 and 2 implement the stereo delay core and memory controls: 50 ms to 60 s echoes, Repeats,
 Level, Size in milliseconds or beats at BPM, IN / OUT / FEED routing, Clear,
 and CV inputs for Level, Repeats and Size. Size changes crossfade between fixed
 read positions to preserve pitch. The separate 3-minute memory records the
 input and, in FEED, the processed repeats.
 
-Scan, Spread, Collect, Loop, Memory dry, Wipe, Dry kill, On/bypass, Always and
-Trails are reserved for Milestone 2. Their controls and Scan/Spread CV inputs
-are currently inert. Size clock stays at zero until Milestone 3. All 39 ports
+Scan (Auto and Manual), Spread, Collect, Loop/Latch, Memory dry, Wipe, Dry kill,
+On/bypass, Always and Trails are active, including Scan/Spread CV. Size clock
+stays at zero until Milestone 3. All 39 ports
 retain the indices and symbols established in Milestone 0.
 
 The delay uses two plugins in one bundle:
@@ -42,10 +42,50 @@ two audio inputs and no audio outputs.
 | Sync / Size beats / BPM | Echo time is beats times 60/BPM, limited to 50 ms-60 s |
 | Routing | In: effects repeat inside the echo loop; Out: each echo is processed once; Feed: processed repeats enter memory |
 | Clear | Rising edge fades memory reads over 20 ms and invalidates old history in constant time; existing echoes remain |
+| Scan | Manual: position in the 3-minute memory; Auto: frequency and depth of excursions, with a snap back to the present |
+| Scan hold | Forces maximum Auto Scan while held, then returns to the Manual setting or Auto present |
+| Spread | Adds a second memory position behind Scan; the two positions mix at equal power |
+| Collect | Overdubs the memory's previous 3-minute turn at 0.7 gain, with its own feedback limiter |
+| Loop / Latch | Holds the echo unchanged while memory records; Latch toggles on each Loop rising edge |
+| Memory dry | Off, Scanning (history only, default), or On (full memory mix, including present) |
+| Wipe | Mutes direct echoes and forces Memory dry On |
+| Dry kill | Off; Always (including bypass); Effect on (passes dry while bypassed) |
+| On / Always / Trails | Bypass through On; Always records while bypassed; Trails lets echoes decay |
+
+Scan and Spread targets snap to whole multiples of Size and clamp inside the
+memory. Moves use a short local scrub and a 60 ms crossfade, so even a full
+3-minute jump settles within 150 ms. A target received during a fade replaces
+the pending target. Snap-backs use 30 ms. Complementary fade weights avoid a
+volume boost on correlated audio. At maximum Auto
+Scan the excursion stays away until the setting is reduced. History that has
+not been recorded, or was cleared, plays silence. Loop uses the external return
+in In routing and internal full-Size feedback in Out and Feed. Size can change
+without erasing a held loop. Loop releases back to Repeats over 50 ms.
+
+Feed records only Repeats times Return, independently of Level and memory dry.
+Memory dry monitors playback; Collect provides memory overdubbing. Send carries
+only the echo tap. There is no feedback path at the host block period. Wipe
+mutes the direct echo output; in Feed, processed returns still enter memory
+and can be heard later through memory dry.
+
+Spread is off when its snapped offset is zero. In Scanning mode the present
+tap is omitted, so turning on Spread does not add another copy of live dry.
+Memory dry On deliberately monitors the full mix; Dry kill can remove live
+dry when that full memory playback is wanted by itself.
+
+Bypass fades the effect over 10 ms. Without Trails it also discards the echo
+after fading, including on a quick bypass/re-engage. Trails releases Loop back
+to ordinary Repeats, so a held Loop cannot override tail decay. At maximum
+Repeats, ordinary unity feedback can still sustain a tail. Ordinarily bypass clears memory. Collect
+pauses the memory and its read heads; with Trails, it keeps moving and
+overdubbing without live input. Always keeps recording live input, overrides
+Collect while bypassed, and caps Repeats feedback at 0.7. **Use the On control
+(`enabled`) for bypass.** Ingen's block bypass stops running the plugin and
+cannot provide these behaviors; Peepo's overlay must use `"bypass": "port"`.
 
 CV is added to the corresponding knob's normalized 0-1 position, then clamped.
 Size uses a logarithmic scale. Level and Repeats read CV per sample; Size reads
-it every 32 samples. Peepo's LFOs provide bipolar and unipolar modes; its CV
+it every 32 samples, as do Scan and Spread. Peepo's LFOs provide bipolar and unipolar modes; its CV
 utility modules can scale modulation.
 
 Build on Linux with a C++17 compiler, GNU Make, pkg-config and LV2 headers
@@ -97,7 +137,7 @@ make lint DESTDIR="$PWD/build/stage" PREFIX=/opt/peepo
 
 `make lint` prints SKIP if lv2lint is absent. It fails when an installed lv2lint
 reports an error. The remaining author-email warning and validation limits are
-recorded in [the Milestone 1 validation record](docs/milestone-1-validation.md).
+recorded in [the Milestone 2 validation record](docs/milestone-2-validation.md).
 
 For a focused ThreadSanitizer transport check:
 
@@ -121,7 +161,8 @@ make test-hosts
 This check starts a private dummy JACK server, loads both plugins in jalv, then
 patches Discipline Send through external effects into the input-only Return
 in Ingen with one and four processing threads. It checks exact echo timing and
-decay in all three routings, BPM sync, a filter in the return path, feedback
+decay in all three routings, BPM sync, enabled-port bypass, Wipe, Memory dry,
+Dry kill, Always recording, a filter in the return path, feedback
 rejection, and control/Pair restoration with empty audio buffers after reload.
 It stops only its own child processes. Logs go
 to `build/host-smoke/`. The default period is 1024 frames to tolerate WSL

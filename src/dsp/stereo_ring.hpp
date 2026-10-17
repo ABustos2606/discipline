@@ -48,6 +48,12 @@ public:
         if (capacity_ < 4 || !std::isfinite(delay) || delay < 1 ||
             delay > static_cast<double>(capacity_ - 2) || delay > static_cast<double>(position_ - valid_from_)) { return {}; }
         const auto d = static_cast<uint64_t>(delay);
+        // The sample ahead of delay 1 has not been written. Use a linear
+        // segment here instead of supplying a fabricated zero to Hermite.
+        if (d == 1) {
+            const float t = static_cast<float>(delay - d);
+            return read(1, boundary_fade) * (1 - t) + read(2, boundary_fade) * t;
+        }
         return hermite(read(d - 1, boundary_fade), read(d, boundary_fade),
                        read(d + 1, boundary_fade), read(d + 2, boundary_fade), static_cast<float>(delay - d));
     }

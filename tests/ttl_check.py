@@ -48,6 +48,8 @@ def check(bundle):
         require(graph.value(plugin, DOAP.license) == URIRef("https://spdx.org/licenses/MIT"), f"{fragment}: license")
         require(set(graph.objects(plugin, LV2.requiredFeature)) == ({MAP} if fragment == "discipline" else set()), f"{fragment}: required features")
         require({LV2.hardRTCapable, OPTIONS} <= set(graph.objects(plugin, LV2.optionalFeature)), f"{fragment}: optional features")
+        if fragment == "return":
+            require(MAP in set(graph.objects(plugin, LV2.optionalFeature)), "Return: optional urid:map")
         require(graph.value(plugin, LV2.minorVersion) is not None and graph.value(plugin, LV2.microVersion) is not None, f"{fragment}: version")
         require(manifest.value(plugin, LV2.binary) == URIRef((bundle / "discipline.so").as_uri()), f"{fragment}: shared binary")
         require(manifest.value(plugin, RDFS.seeAlso) == URIRef((bundle / filename).as_uri()), f"{fragment}: seeAlso")

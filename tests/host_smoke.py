@@ -264,6 +264,31 @@ def main():
             control("discipline", "sync", 0)
             print(f"PASS Ingen: Size follows BPM/beats, {threads} threads", flush=True)
 
+            # Exercise the real enabled port while Ingen continues calling run.
+            source["mode"] = "dc"
+            control("discipline", "wipe", 1)
+            control("discipline", "memory_dry", 0)  # Wipe must override Off.
+            wait_for(lambda: abs(observed[0] - 0.25) < 1e-6, "Wipe exposes memory dry")
+            control("discipline", "dry_kill", 1)
+            wait_for(lambda: abs(observed[0] - 0.125) < 1e-6, "Always dry kill removes live dry")
+            control("discipline", "enabled", 0)
+            wait_for(lambda: abs(observed[0]) < 1e-7, "port bypass respects Always dry kill")
+            control("discipline", "dry_kill", 2)
+            wait_for(lambda: abs(observed[0] - 0.125) < 1e-6, "Series dry kill passes bypass dry")
+            control("discipline", "always", 1)
+            control("discipline", "scan_mode", 1)
+            control("discipline", "scan", 0.001)
+            time.sleep(1)
+            source["mode"] = "silence"
+            control("discipline", "enabled", 1)
+            wait_for(lambda: abs(observed[0] - 0.125) < 1e-5, "Always recorded while enabled port was zero")
+            for symbol, value in (("scan", 0), ("scan_mode", 0), ("always", 0), ("dry_kill", 0),
+                                  ("wipe", 0), ("memory_dry", 1)):
+                control("discipline", symbol, value)
+            source["mode"] = "dc"
+            wait_for(lambda: abs(observed[0] - 0.1875) < 1e-5, "normal echo resumes after port bypass")
+            print(f"PASS Ingen: Wipe, Memory dry, Dry kill and Always through enabled port, {threads} threads", flush=True)
+
             # A real filter can sit in the return path without a cable cycle.
             protocol.put("ingen:/main/filter", "a ingen:Block ; lv2:prototype <http://drobilla.net/plugins/fomp/mvclpf1>")
             control("filter", "freq", 2000)

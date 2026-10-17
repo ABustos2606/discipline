@@ -59,4 +59,19 @@ private:
     uint32_t fade_in_ = 0;
     float value_ = 1, start_ = 1;
 };
+
+class Ramp {
+public:
+    void configure(double rate, double up, double down) noexcept {
+        up_ = 1.0 / std::max(1.0, rate * up); down_ = 1.0 / std::max(1.0, rate * down);
+    }
+    // Real-time: exact endpoints, including unity for a held Loop.
+    void reset(float value) noexcept { value_ = value; }
+    float tick(float target) noexcept {
+        value_ += std::clamp(static_cast<double>(target) - value_, -down_, up_);
+        return static_cast<float>(value_);
+    }
+private:
+    double value_ = 0, up_ = 1, down_ = 1;
+};
 } // namespace discipline::dsp

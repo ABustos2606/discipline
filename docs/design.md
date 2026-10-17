@@ -118,9 +118,21 @@ Checked on 16 October 2026 against the Chase Bliss Habit manual (Peepo's `refere
 
 ## Milestones
 
-**Implementation update, 16 October 2026:** Milestone 1's delay core is
-implemented and passes the desktop and emulated arm64 tests, plus jalv and
-Ingen host checks. [Validation and remaining release gates](milestone-1-validation.md)
+**Behavior decisions after the Milestone 2 audit:** large Scan/Spread moves
+use a short audible scrub plus a crossfade, reaching their selected history
+within 150 ms. They do not scrub across the entire intervening history.
+Feed recirculates only Repeats times Return, independent of Level; Memory dry
+is playback only and Collect provides memory overdubbing. These choices
+supersede the original implementation's full-distance glides and block-period
+memory-dry feedback. Scanning memory dry omits the present-time tap; explicit
+On monitors the full mix. Scan hold returns to the Manual target when released
+in Manual mode. Without Trails, bypass discards echoes after its fade; with
+Trails, Loop releases back to ordinary Repeats. The manual summary above is
+reference material, not an instruction to restore the rejected feedback path.
+
+**Implementation update, 16 October 2026:** Milestones 1 and 2's delay core and
+memory controls are implemented, with desktop, emulated arm64, jalv and Ingen
+checks. [Validation and remaining release gates](milestone-2-validation.md)
 record the scope. The checkbox below stays open until physical Pi validation
 and the release follow-up are complete.
 

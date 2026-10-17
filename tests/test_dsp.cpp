@@ -26,6 +26,7 @@ int main()
         near(ring.read(1024).l, 1024, 0, "ring oldest after wrap");
         near(ring.read(1025).l, 0, 0, "ring never reads overwritten history");
         near(ring.fractional(3.5, 0).l, 2044.5f, 0, "fractional ramp");
+        near(ring.fractional(1.5, 0).l, 2046.5f, 0, "interpolation at present does not invent an unwritten sample");
         near(dsp::hermite(0, 1, 2, 3, 0.5f), 1.5f, 0, "Hermite linear interpolation");
         ring.clear(); near(ring.read(1).l, 0, 0, "logical clear");
         ring.push({0.25f, -0.5f}); near(ring.read(1).l, 0.25f, 0, "fresh input is uncoloured");

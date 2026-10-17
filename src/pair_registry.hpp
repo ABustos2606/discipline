@@ -37,12 +37,13 @@ bool read_return(const PairSlot& slot, uint32_t epoch, uint64_t frame, dsp::Fram
 
 class ReturnWriter {
 public:
-    void reset() noexcept { slot_ = nullptr; epoch_ = 0; }
+    void reset() noexcept { slot_ = nullptr; epoch_ = 0; frame_ = clock_ = 0; }
     void write(PairSlot* slot, const float* left, const float* right, uint32_t frames, uint32_t fallback_block = 128) noexcept;
 private:
     PairSlot* slot_ = nullptr;
     uint32_t epoch_ = 0;
     uint64_t frame_ = 0;
+    uint64_t clock_ = 0;
 };
 
 class PairClaim {

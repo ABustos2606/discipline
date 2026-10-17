@@ -221,6 +221,19 @@ void rt_timing(const Library& lib)
             host.main->control(MainPort::size) = 50 + (rng % 59951);
             host.main->control(MainPort::routing) = static_cast<float>(rng % 3);
             host.main->control(MainPort::clear) = (rng >> 8) & 1;
+            host.main->control(MainPort::scan) = ((rng >> 4) % 1001) * 0.001f;
+            host.main->control(MainPort::spread) = ((rng >> 6) % 1001) * 0.001f;
+            host.main->control(MainPort::scan_mode) = (rng >> 11) & 1;
+            host.main->control(MainPort::scan_hold) = (rng >> 14) & 1;
+            host.main->control(MainPort::collect) = (rng >> 15) & 1;
+            host.main->control(MainPort::loop) = (rng >> 16) & 1;
+            host.main->control(MainPort::latch) = (rng >> 17) & 1;
+            host.main->control(MainPort::memory_dry) = static_cast<float>((rng >> 18) % 3);
+            host.main->control(MainPort::wipe) = (rng >> 20) & 1;
+            host.main->control(MainPort::dry_kill) = static_cast<float>((rng >> 21) % 3);
+            host.main->control(MainPort::always) = (rng >> 23) & 1;
+            host.main->control(MainPort::trails) = (rng >> 24) & 1;
+            host.main->control(MainPort::enabled) = (rng >> 25) & 1;
         }
         host.period([](uint64_t f) { const float s = 0.1f * std::sin(f * 0.03); return Frame{s, -s}; }, cable);
         for (uint32_t i = 0; i < host.block; ++i) { require(std::isfinite(host.main->buffers[2][i]), "finite output under random controls"); }

@@ -51,6 +51,14 @@ $(BUILD_DIR)/test_core: tests/test_core.cpp tests/host.cpp tests/host.hpp src/po
 	@mkdir -p "$(@D)"
 	$(CXX) $(COMPILE_FLAGS) tests/test_core.cpp tests/host.cpp $(LDFLAGS) $(SAN_FLAGS) -ldl -pthread -o $@
 
+$(BUILD_DIR)/test_memory: tests/test_memory.cpp tests/host.cpp tests/host.hpp src/ports.hpp $(wildcard src/dsp/*.hpp)
+	@mkdir -p "$(@D)"
+	$(CXX) $(COMPILE_FLAGS) tests/test_memory.cpp tests/host.cpp $(LDFLAGS) $(SAN_FLAGS) -ldl -pthread -o $@
+
+$(BUILD_DIR)/test_m2_audit: tests/test_m2_audit.cpp tests/host.cpp tests/host.hpp src/ports.hpp $(wildcard src/dsp/*.hpp)
+	@mkdir -p "$(@D)"
+	$(CXX) $(COMPILE_FLAGS) tests/test_m2_audit.cpp tests/host.cpp $(LDFLAGS) $(SAN_FLAGS) -ldl -pthread -o $@
+
 $(BUILD_DIR)/test_dsp: tests/test_dsp.cpp tests/host.cpp tests/host.hpp $(wildcard src/dsp/*.hpp) src/host_config.hpp src/pair_registry.cpp src/pair_registry.hpp
 	@mkdir -p "$(@D)"
 	$(CXX) $(COMPILE_FLAGS) tests/test_dsp.cpp tests/host.cpp src/pair_registry.cpp $(LDFLAGS) $(SAN_FLAGS) -ldl -pthread -o $@
@@ -61,11 +69,13 @@ $(BUILD_DIR)/render: tools/render.cpp tests/host.cpp tests/host.hpp src/ports.hp
 
 render: all $(BUILD_DIR)/render
 
-test: all $(BUILD_DIR)/test_scaffold $(BUILD_DIR)/test_dsp $(BUILD_DIR)/test_core $(BUILD_DIR)/render
+test: all $(BUILD_DIR)/test_scaffold $(BUILD_DIR)/test_dsp $(BUILD_DIR)/test_core $(BUILD_DIR)/test_memory $(BUILD_DIR)/test_m2_audit $(BUILD_DIR)/render
 	$(PYTHON) tests/ttl_check.py $(BUNDLE)
 	$(BUILD_DIR)/test_scaffold $(BUNDLE)/discipline.so
 	$(BUILD_DIR)/test_dsp
 	$(BUILD_DIR)/test_core $(BUNDLE)/discipline.so
+	$(BUILD_DIR)/test_memory $(BUNDLE)/discipline.so
+	$(BUILD_DIR)/test_m2_audit $(BUNDLE)/discipline.so
 	$(BUILD_DIR)/test_core $(BUNDLE)/discipline.so --timing
 	$(PYTHON) tests/render_check.py $(BUILD_DIR)/render $(BUNDLE)/discipline.so
 
@@ -89,6 +99,6 @@ lint:
 	else echo 'SKIP lv2lint: not installed (install the bundle with make install first)'; fi
 
 clean:
-	$(RM) $(OBJECTS) $(OBJECTS:.o=.d) $(BUNDLE)/discipline.so $(TTL_TARGETS) $(BUNDLE)/LICENSE $(BUILD_DIR)/test_scaffold $(BUILD_DIR)/test_dsp $(BUILD_DIR)/test_core $(BUILD_DIR)/render
+	$(RM) $(OBJECTS) $(OBJECTS:.o=.d) $(BUNDLE)/discipline.so $(TTL_TARGETS) $(BUNDLE)/LICENSE $(BUILD_DIR)/test_scaffold $(BUILD_DIR)/test_dsp $(BUILD_DIR)/test_core $(BUILD_DIR)/test_memory $(BUILD_DIR)/test_m2_audit $(BUILD_DIR)/render
 
 -include $(OBJECTS:.o=.d)
