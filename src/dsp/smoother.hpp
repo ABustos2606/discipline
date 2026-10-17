@@ -71,6 +71,7 @@ public:
         value_ += std::clamp(static_cast<double>(target) - value_, -down_, up_);
         return static_cast<float>(value_);
     }
+    float value() const noexcept { return static_cast<float>(value_); }
 private:
     double value_ = 0, up_ = 1, down_ = 1;
 };

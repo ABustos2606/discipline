@@ -88,8 +88,8 @@ int main()
         std::cout << "PASS host options: typed values, precedence, validation and fallback\n";
 
         prepare_pair_registry();
-        PairClaim main(false), ret(true); float id = 16;
-        main.update(&id, 64); ret.update(&id);
+        PairClaim main(false), ret(true);
+        main.update(true, 64); ret.update(true);
         auto& slot = *main.slot(); slot.main_frames.store(64);
         ReturnWriter writer;
         std::atomic<bool> ready{false}, done{false};

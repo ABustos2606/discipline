@@ -44,7 +44,7 @@ private:
     dsp::Modifiers modifiers_;
     dsp::OnePole level_, repeats_, in_mix_, out_mix_, feed_mix_;
     dsp::OnePole memory_dry_, collect_mix_;
-    dsp::Ramp effect_, wet_, dry_, echo_input_, loop_, wipe_;
+    dsp::Ramp effect_, wet_, dry_, echo_input_, loop_, wipe_, outside_;
     dsp::Slew return_fade_{1.0 / 64.0};
     dsp::LoopGain echo_gain_, feed_gain_, collect_gain_;
     PairSlot* last_slot_ = nullptr;

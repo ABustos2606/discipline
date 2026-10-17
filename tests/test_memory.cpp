@@ -31,20 +31,23 @@ void audit(const Library& lib) {
             "bad input is zeroed per channel without clearing an existing echo or its slice");
 
     Host h(lib); h.render(1024, silence);
-    // Both ports change 37 samples into the period, with independently sliced runs.
-    h.main->slice(0, 37); h.main->control(MainPort::pair) = 2; h.main->slice(37, 91);
-    for (uint32_t i = 0; i < h.block; ++i) {
-        h.ret->buffers[0][i] = h.main->buffers[4][i]; h.ret->buffers[1][i] = h.main->buffers[5][i];
+    // Leaving and re-entering Outside 37 samples into a period releases and
+    // re-claims the Return, with independently sliced runs.
+    for (float modifier : {0.0f, 5.0f}) {
+        h.main->slice(0, 37); h.main->control(MainPort::modifier) = modifier; h.main->slice(37, 91);
+        for (uint32_t i = 0; i < h.block; ++i) {
+            h.ret->buffers[0][i] = h.main->buffers[4][i]; h.ret->buffers[1][i] = h.main->buffers[5][i];
+        }
+        h.ret->slice(0, 37); h.ret->slice(37, 91); h.frame += h.block;
     }
-    h.ret->slice(0, 37); h.ret->controls[2] = 2; h.ret->slice(37, 91); h.frame += h.block;
     h.render(1024, silence);
     const auto pulse = h.frame + 13;
     const auto audio = h.render(512, silence, [=](Frame, uint64_t f) { return f == pulse ? Frame{0.25f, -0.125f} : Frame{}; });
-    near(audio[13 + h.block].l, 0.25f, 1e-6f, "mid-period Pair change preserves one-block return delay");
+    near(audio[13 + h.block].l, 0.25f, 1e-6f, "mid-period re-claim preserves one-block return delay");
     for (size_t i = 0; i < audio.size(); ++i) {
-        if (i != 13 + h.block) { near(audio[i].l, 0, 1e-7f, "no shifted Pair impulse"); }
+        if (i != 13 + h.block) { near(audio[i].l, 0, 1e-7f, "no shifted re-claim impulse"); }
     }
-    std::cout << "PASS audit: Pair changes within a block; NaN/Inf input preserves other samples and echoes\n";
+    std::cout << "PASS audit: Outside re-claims within a block; NaN/Inf input preserves other samples and echoes\n";
 }
 
 void scan_components() {

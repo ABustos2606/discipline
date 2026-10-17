@@ -46,9 +46,9 @@ void clocks(const Library& lib) {
     for (size_t i = 0; i < slow.size(); ++i) { near(slow[i], i % 60000 == 0 ? 1 : 0, 0, "log Size CV reaches 60-second clock"); }
     Host control(lib, 1000, 16); clock_audio(control, 512);
     control.main->control(MainPort::enabled) = 0; control.main->control(MainPort::loop) = 1;
-    control.main->control(MainPort::clear) = 1; control.main->control(MainPort::pair) = 2; control.ret->controls[2] = 2;
+    control.main->control(MainPort::clear) = 1;
     const auto continued = clock_audio(control, 512);
-    for (size_t i = 0; i < continued.size(); ++i) { near(continued[i], (i + 512) % 50 == 0 ? 1 : 0, 0, "bypass/Loop/Clear/Pair do not reset clock phase"); }
+    for (size_t i = 0; i < continued.size(); ++i) { near(continued[i], (i + 512) % 50 == 0 ? 1 : 0, 0, "bypass/Loop/Clear do not reset clock phase"); }
     control.main->activate(); const auto reset = clock_audio(control, 32);
     near(reset[0], 1, 0, "activation restarts the clock"); near(reset[1], 0, 0, "activation pulse width");
     std::cout << "PASS m3_clock: sample-exact pulses, 44.1/48/96 kHz, 64/128/256 frames, committed Size, tempo/CV and lifecycle\n";
@@ -86,8 +86,9 @@ void speed(const Library& lib) {
         h.render(19200, ramp); const auto start = h.frame; const auto audio = h.render(9600, ramp);
         for (size_t i = 0; i < audio.size(); ++i) {
             const auto t = start + i, phase = t % 4800;
-            if (phase == 200 || phase == 500 || phase == 3000) {
-                near(audio[i].l, ramp((t / 4800) * 4800 - block - 1 - phase).l, 1e-7f, "reverse plays the complete captured Size window backwards");
+            // Past the 10 ms splice, each echo is the previous one backwards.
+            if (phase == 500 || phase == 1000 || phase == 3000) {
+                near(audio[i].l, ramp((t / 4800) * 4800 - 1 - phase).l, 1e-7f, "reverse plays the complete captured Size window backwards");
             }
         }
     }
@@ -99,8 +100,8 @@ void speed(const Library& lib) {
             // Above 30 s, Speed captures two 30 s chunks per echo; each is
             // read during the next chunk, inside the 60 s echo line.
             const auto t = start + i, chunk = t / 30000 * 30000, phase = t % 30000;
-            const auto index = amount == 0 ? (29999 - 4 * phase % 30000) : ((16 + 4 * phase) % 30000);
-            near(audio[i].l, ramp(chunk - 16 - 30000 + index).l, 2e-7f, "60-second Size plays 30 s 4x/reverse chunks from the 60 s echo line");
+            const auto index = amount == 0 ? (29999 - 4 * phase % 30000) : (4 * phase % 30000);
+            near(audio[i].l, ramp(chunk - 30000 + index).l, 2e-7f, "60-second Size plays 30 s 4x/reverse chunks from the 60 s echo line");
         }
     }
     {
@@ -109,17 +110,19 @@ void speed(const Library& lib) {
         h.render(90000, ramp); const auto start = h.frame; const auto audio = h.render(30000, ramp);
         for (size_t i : {1000U, 15000U, 29000U}) {
             const auto t = start + i, period = t / 30000 * 30000, phase = t % 30000;
-            near(audio[i].l, ramp(period - 16 - 30000 + 29999 - phase).l, 2e-7f, "30-second Size still reverses the complete window");
+            near(audio[i].l, ramp(period - 1 - phase).l, 2e-7f, "30-second Size still reverses the complete window");
         }
     }
     Host changed(lib, 1000, 16); wet_only(changed, 2, 0.25f);
     changed.main->control(MainPort::size) = 100;
     const auto code = [](uint64_t f) { return Frame{static_cast<float>(f) * 1e-4f, 0}; };
     changed.render(160, code); changed.main->control(MainPort::size) = 200;
-    const auto after = changed.render(256, code);
-    for (uint64_t phase : {120U, 170U}) {
-        near(after[200 + phase - 160].l, code(184 - 1 - phase).l, 1e-7f,
-             "Size committed during Send lead updates the whole reverse window at the same boundary");
+    const auto after = changed.render(400, code);
+    // The tap commits after its 30 ms fade; the clock takes the new Size at
+    // the wrap at 200, and that echo reverses the whole new window.
+    for (uint64_t phase : {50U, 120U, 170U}) {
+        near(after[200 + phase - 160].l, code(200 - 1 - phase).l, 1e-7f,
+             "a new Size reverses its whole window from its first boundary");
     }
     std::cout << "PASS m3_speed: stepped/smooth, stop without DC, measured pitch, stereo, full-window reverse, 30 s chunks above 30 s\n";
 }
@@ -149,29 +152,30 @@ void antialias_and_neutral(const Library& lib) {
     std::cout << "PASS m3_alias/neutral: antialias filtering and bit-exact unity/neutral settings\n";
 }
 void rhythm(const Library& lib) {
-    // Trimmer keeps a slice of each echo and repeats it. A coded ramp names
-    // every input frame, so each output sample shows which frame it replays.
+    // Trimmer keeps part of each echo and silences the rest, so each echo
+    // gets shorter. A coded ramp names every input frame.
     const auto ramp = [](uint64_t f) { return Frame{static_cast<float>(f) * 1e-6f, 0}; };
+    const auto trimmed = [](uint64_t phase, uint64_t length, uint64_t kept, int step) {
+        return step == 0 || (step < 0 ? phase < kept : phase >= length - kept);
+    };
     for (int step = -7; step <= 7; ++step) {
         Host h(lib); h.main->control(MainPort::size) = 100; wet_only(h, 3, (step + 7) / 14.0f);
         h.render(19200, ramp); const auto start = h.frame; const auto audio = h.render(9600, ramp);
-        const auto slice = static_cast<uint64_t>(std::llround(4800 * dsp::Modifiers::trim_keep(step)));
+        const auto kept = static_cast<uint64_t>(std::llround(4800 * dsp::Modifiers::trim_keep(step)));
         for (size_t i = 0; i < audio.size(); ++i) {
-            const uint64_t t = start + i, phase = t % 4800, within = phase % slice;
-            if (step != 0 && within < 48) { continue; } // 1 ms crossfade after each jump
-            const uint64_t echo = t - phase;
-            const uint64_t source = step == 0 ? t - 4800 : step < 0 ? echo - 4800 + within : echo - slice + within;
-            near(audio[i].l, ramp(source).l, 1e-7f, "Trimmer step " + std::to_string(step) + " repeats the kept slice");
+            const uint64_t t = start + i, phase = t % 4800;
+            const bool on = trimmed(phase, 4800, kept, step);
+            if (step != 0 && (on != trimmed(phase >= 144 ? phase - 144 : phase + 4656, 4800, kept, step))) { continue; } // 3 ms edge
+            near(audio[i].l, on ? ramp(t - 4800).l : 0, 1e-7f, "Trimmer step " + std::to_string(step) + " keeps its part of each echo");
         }
     }
-    // Above 30 s, Trimmer slices each half of the echo, inside the 60 s line.
+    // A 60 s Size trims the whole echo, not 30 s halves.
     for (int step : {-7, 7}) {
         Host h(lib, 1000, 16); h.main->control(MainPort::size) = 60000; wet_only(h, 3, (step + 7) / 14.0f);
         h.render(180000, ramp); const auto start = h.frame; const auto audio = h.render(60000, ramp);
-        for (size_t i : {5000U, 20000U, 35000U, 50000U}) {
-            const uint64_t t = start + i, phase = t % 30000, within = phase % 3750, half = t - phase;
-            const uint64_t source = step < 0 ? half - 30000 + within : half - 3750 + within;
-            near(audio[i].l, ramp(source).l, 1e-7f, "60 s Trimmer repeats slices of each 30 s half");
+        for (size_t i : {5000U, 20000U, 35000U, 55000U}) {
+            const uint64_t t = start + i;
+            near(audio[i].l, trimmed(t % 60000, 60000, 7500, step) ? ramp(t - 60000).l : 0, 1e-7f, "60 s Trimmer keeps an eighth of the echo");
         }
     }
     require(dsp::Modifiers::trim_step(0) == -7 && dsp::Modifiers::trim_step(0.5f) == 0 && dsp::Modifiers::trim_step(1) == 7,
@@ -194,9 +198,10 @@ void rhythm(const Library& lib) {
                                             : "random Dropper changes from echo to echo");
         require(on > 1000 && off > 1000, "Dropper contains both sound and gaps");
         if (amount == 0.75f || amount == 0.25f) { require(partial > 1000, "some drops are shallow rather than silent"); }
-        if (amount == 1 || amount == 0) { require(edges > 16, "maximum Dropper produces short grains rather than muting everything"); }
+        // 15 ms grains with half kept: about 16 separate grain onsets a second.
+        if (amount == 1 || amount == 0) { require(edges > 10, "maximum Dropper produces short grains rather than muting everything"); }
     }
-    std::cout << "PASS m3_rhythm: stepped Trimmer slices repeat (start left, end right), noon-neutral Dropper with random/pattern sides\n";
+    std::cout << "PASS m3_rhythm: stepped Trimmer shortens each echo (start left, end right), noon-neutral Dropper with random/pattern sides\n";
 }
 void transitions_and_slices(const Library& lib) {
     const auto render = [&](bool sliced) {
@@ -212,14 +217,14 @@ void transitions_and_slices(const Library& lib) {
     require(std::memcmp(a.data(), b.data(), a.size() * sizeof(Frame)) == 0, "all modifiers and transitions are slice independent");
     float previous = a.front().l;
     for (auto f : a) { require(dsp::finite(f) && std::fabs(f.l - previous) < 0.005f, "mode/amount changes stay bounded without a DC click"); previous = f.l; }
+    // At 4x a 100 Hz sine is cut every 1200 frames at half a period, so each
+    // wrap and Size restart is a real splice. Within the splice the slope may
+    // exceed the 400 Hz sine's (0.0052 a frame) only by the 10 ms fade's.
     Host fast(lib); wet_only(fast, 1, 1); fast.main->control(MainPort::size) = 100;
-    const auto saw = [](uint64_t f) { return Frame{static_cast<float>(f % 4800) * (0.1f / 4800), 0}; };
-    fast.render(19200, saw); const auto wraps = fast.render(19200, saw);
+    const auto sine = [](uint64_t f) { return Frame{static_cast<float>(0.1 * std::sin(f * (6.283185307179586 * 100 / 48000))), 0}; };
+    fast.render(19200, sine); const auto wraps = fast.render(19200, sine);
     for (size_t i = 1; i < wraps.size(); ++i) {
-        // The source itself has a discontinuity each quarter at 4x. Inspect
-        // the Size restart, where an interrupted wrap fade must mask it.
-        if (i % 4800 >= 64) { continue; }
-        require(std::fabs(wraps[i].l - wraps[i - 1].l) < 0.005f, "4x window wrap/restart step at " + std::to_string(i) + ": " + std::to_string(wraps[i - 1].l) + " -> " + std::to_string(wraps[i].l));
+        require(std::fabs(wraps[i].l - wraps[i - 1].l) < 0.007f, "4x window wrap/restart step at " + std::to_string(i) + ": " + std::to_string(wraps[i - 1].l) + " -> " + std::to_string(wraps[i].l));
     }
     std::cout << "PASS m3_transitions: mode/amount smoothing, bounded DC steps, bit-exact host-slice independence\n";
 }

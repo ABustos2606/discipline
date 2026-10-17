@@ -96,11 +96,10 @@ void ReturnWriter::write(PairSlot* slot, const float* left, const float* right, 
 }
 
 // Real-time section: bounded lock-free claims only; no allocation, locks or I/O.
-void PairClaim::update(const float* control, uint32_t block_length) noexcept
+void PairClaim::update(bool wanted, uint32_t block_length) noexcept
 {
-    const float value = control && std::isfinite(*control) ? *control : 1.0f;
-    const auto id = static_cast<uint32_t>(std::clamp(value, 1.0f, 16.0f) + 0.5f);
-    auto* desired = &pair_slots[id - 1];
+    if (!wanted) { release(); return; }
+    auto* desired = &pair_slots[0];
     if (slot_ == desired) {
         return;
     }

@@ -138,7 +138,6 @@ void cv(const Library& lib)
     require(output[7].l > output[6].l && output[8].l > 0 && output[8].l < output[7].l, "Level CV is sampled per sample and smoothed");
     for (float modulation : {-1.0f, 1.0f}) {
         Host h(lib); h.main->control(MainPort::size) = modulation < 0 ? 60000 : 50;
-        h.main->control(MainPort::pair) = 2; h.ret->controls[2] = 2;
         std::fill(h.main->buffers[30].begin(), h.main->buffers[30].end(), modulation);
         const uint64_t delay = modulation < 0 ? 2400 : 2880000;
         warm(h); const auto start = h.frame;
@@ -148,7 +147,6 @@ void cv(const Library& lib)
     }
     for (float modulation : {-1.0f, 1.0f}) {
         Host h(lib); h.main->control(MainPort::repeats) = modulation < 0 ? 1 : 0;
-        h.main->control(MainPort::pair) = 2; h.ret->controls[2] = 2;
         std::fill(h.main->buffers[29].begin(), h.main->buffers[29].end(), modulation);
         warm(h); const auto start = h.frame;
         const auto audio = h.render(7500, [=](uint64_t f) { return f == start ? Frame{0.1f, 0} : Frame{}; });
@@ -207,6 +205,49 @@ void repeats_max(const Library& lib)
     std::cout << "PASS repeats_max: 60 s, unity feedback with +18 dB effect, bounded audible output and exact dry\n";
 }
 
+void standalone(const Library& lib)
+{
+    // A fresh Discipline with the .ttl defaults and no Return anywhere is an
+    // audible delay: 500 ms echoes that repeat, and a silent Send.
+    for (float modifier : {0.0f, 5.0f}) {
+        Host host(lib); host.run_return = false;
+        auto& m = *host.main;
+        m.control(MainPort::level) = 0.5f; m.control(MainPort::repeats) = 0.4f; m.control(MainPort::size) = 500;
+        m.control(MainPort::routing) = 0; m.control(MainPort::memory_dry) = 1; m.control(MainPort::modify) = 0.5f;
+        m.control(MainPort::modifier) = modifier; // Outside with no Return keeps the echo inside
+        warm(host);
+        const uint64_t start = host.frame;
+        std::vector<Frame> audio; float send = 0;
+        while (audio.size() < 24000 * 3 + 256) {
+            const auto part = host.render(host.block, [=](uint64_t f) { return f == start ? Frame{0.25f, -0.25f} : Frame{}; });
+            audio.insert(audio.end(), part.begin(), part.end());
+            for (uint32_t i = 0; i < host.block; ++i) { send = std::max(send, std::fabs(host.main->buffers[4][i])); }
+        }
+        near(audio[0].l, 0.25f, 0, "dry passes");
+        near(audio[24000].l, 0.125f, 1e-6f, "first echo at Size, at Level");
+        near(audio[48000].l, 0.125f * (0.4f / 0.97f), 1e-6f, "second echo at Repeats");
+        require(first_sound(audio, 1) == 24000, "nothing before the first echo");
+        near(send, modifier == 5 ? 0.25f : 0, 0, "Send carries the echo only on Outside");
+        require(m.control(MainPort::paired) == 0, "no Return found");
+    }
+    // With a Return running, switching to and from Outside is seamless when
+    // the modules between them do nothing: it sounds like never switching.
+    Host host(lib), still(lib);
+    for (auto* h : {&host, &still}) {
+        h->main->control(MainPort::modifier) = 0; h->main->control(MainPort::repeats) = 0.485f;
+        h->main->control(MainPort::dry_kill) = 1;
+    }
+    const auto sine = [](uint64_t f) { const float s = 0.1f * std::sin(6.283185307179586 * 220.0 * f / 48000); return Frame{s, -s}; };
+    host.render(48000, sine); still.render(48000, sine);
+    for (float modifier : {5.0f, 0.0f, 5.0f}) {
+        host.main->control(MainPort::modifier) = modifier;
+        const auto audio = host.render(12000, sine), reference = still.render(12000, sine);
+        for (size_t i = 0; i < audio.size(); ++i) { near(audio[i].l, reference[i].l, 1e-6f, "Outside switch is seamless"); }
+        require(host.main->control(MainPort::paired) == (modifier == 5.0f ? 1.0f : 0.0f), "Return found only on Outside");
+    }
+    std::cout << "PASS standalone: default controls echo without a Return, Send only on Outside; Outside falls back without one and switches seamlessly\n";
+}
+
 void rt_timing(const Library& lib)
 {
     Host host(lib); warm(host); host.measure = true; uint32_t rng = 12345;
@@ -234,7 +275,7 @@ void rt_timing(const Library& lib)
             host.main->control(MainPort::always) = (rng >> 23) & 1;
             host.main->control(MainPort::trails) = (rng >> 24) & 1;
             host.main->control(MainPort::enabled) = (rng >> 25) & 1;
-            host.main->control(MainPort::modifier) = static_cast<float>((rng >> 26) % 5);
+            host.main->control(MainPort::modifier) = static_cast<float>((rng >> 26) % 6);
             host.main->control(MainPort::modify) = ((rng >> 7) % 1001) * 0.001f;
         }
         // Modify CV sweeps per sample, so Speed and the gates change inside each period.
@@ -259,6 +300,6 @@ int main(int argc, char** argv)
         Library lib(argv[1]);
         if (argc == 3 && std::string(argv[2]) == "--timing") { rt_timing(lib); return 0; }
         return_latency(lib); echo_time(lib); routing(lib); size_no_pitch(lib); cv(lib);
-        stale_and_nonfinite(lib); repeats_max(lib);
+        stale_and_nonfinite(lib); repeats_max(lib); standalone(lib);
     } catch (const std::exception& e) { std::cerr << "FAIL core: " << e.what() << '\n'; return 1; }
 }

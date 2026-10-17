@@ -1,5 +1,12 @@
 # Milestone 3 implementation and validation
 
+**Superseded in part after the first Pi test (17 October 2026):** the
+modifiers now run inside Discipline's echo loop rather than on Send, Trimmer
+shortens each echo instead of repeating a slice, Speed splices are longer and
+Smooth speed's curve changed, Dropper's grains are 15 ms over the last
+quarter, and Modifier gains Outside. See the update in [design](design.md) and
+[the feedback](pi-feedback-2026-10-17.md). The record below is as of `812eb9c`.
+
 Implemented 16-17 October 2026. The user selected the Size clock and all four
 proposed modifiers. The implementation is available for review; physical Pi
 xrun measurements, listening/tuning and the `v0.3.0` release tag remain pending.

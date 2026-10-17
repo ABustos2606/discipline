@@ -17,25 +17,32 @@ Modify CV append three main-plugin ports. Physical Pi and listening release gate
 pending; see [Milestone 3 validation](docs/milestone-3-validation.md). Peepo's build step and catalogue entry are
 described in [Adding Discipline to Peepo](docs/peepo-integration.md).
 
-The delay uses two plugins in one bundle:
+Discipline works on its own: the echo, its Repeats loop and the modifiers
+all run inside the plugin. A fresh Discipline with default controls is a
+500 ms delay; no cables or second module are needed.
+
+To put your own modules inside the echo, pick **Outside** in Modifier and
+add a Discipline Return:
 
 ```text
 Input --> Discipline ------------------------------> Output
               |
-              +-- Send --> [optional effects] --> Discipline Return
+              +-- Send --> [your modules] --> Discipline Return
 ```
 
-Set the same **Pair** (1-16) on both plugins. The two instances share a registry
-inside `discipline.so`, avoiding a cable loop in Ingen. A second main or Return
-with an occupied Pair stays unpaired and retries when that slot becomes free.
-Paired falls to zero if the other owner goes away or stops processing for half
-a second. Return loss and recovery fade over 64 samples; a stopped Return
-realigns when it resumes. Both plugins must run in the same host process and
-load the same shared object. Separate jalv processes cannot pair.
+The Return is a second plugin in the same bundle, because Ingen rejects a
+cable loop back into the same plugin. There is one pair per host process: the
+Return joins the Discipline whose Modifier is Outside, with no ID to match. A
+second Discipline on Outside keeps its echo inside and takes the Return when
+the first lets go. Return found (port `paired`) shows the link. Return loss
+and recovery fade over 64 samples, and the echo crossfades back inside in
+10 ms whenever no Return audio arrives, so a missing or stopped Return never
+silences the echo. Both plugins must run in the same host process and load the
+same shared object; separate jalv processes cannot pair. Send is silent unless
+Modifier is Outside. The Return has two audio inputs and no audio outputs.
 
-**Always cable Send to Return**, directly or through effects. Without that
-cable there is no audible echo. Return has
-two audio inputs and no audio outputs.
+The old Pair control (port 26 on Discipline, 2 on the Return) is no longer
+read. It stays, hidden, so patches saved with it still load.
 
 | Control | Behaviour |
 | --- | --- |
@@ -43,7 +50,7 @@ two audio inputs and no audio outputs.
 | Repeats | Feedback gain; the top 3% reaches unity, with feedback limiting |
 | Size | Echo time in ms; changes crossfade over 30 ms |
 | Sync / Size beats / BPM | Echo time is beats times 60/BPM, limited to 50 ms-60 s |
-| Routing | In: effects repeat inside the echo loop; Out: each echo is processed once; Feed: processed repeats enter memory |
+| Routing | In: the modifier acts again on every repeat; Out: repeats stay plain and each echo is modified once on the way out; Feed: the modified echo is recorded into memory |
 | Clear | Rising edge fades memory reads over 20 ms and invalidates old history in constant time; existing echoes remain |
 | Scan | Manual: position in the 3-minute memory; Auto: frequency and depth of excursions, with a snap back to the present |
 | Scan hold | Forces maximum Auto Scan while held, then returns to the Manual setting or Auto present |
@@ -51,37 +58,41 @@ two audio inputs and no audio outputs.
 | Collect | Overdubs the memory's previous 3-minute turn at 0.7 gain, with its own feedback limiter |
 | Loop / Latch | Holds the echo unchanged while memory records; Latch toggles on each Loop rising edge |
 | Memory dry | Off, Scanning (history only, default), or On (full memory mix, including present) |
-| Wipe | Mutes direct echoes and forces Memory dry On |
+| Wipe: no echo | Mutes the echo, so only the memory is heard, and forces Memory dry On |
 | Dry kill | Off; Always (including bypass); Effect on (passes dry while bypassed) |
 | On / Always / Trails | Bypass through On; Always records while bypassed; Trails lets echoes decay |
 | Size clock | CV output: 1.0 for 1 ms at each Size boundary, otherwise zero |
-| Modifier / Modify | Off, Stepped speed, Smooth speed, Trimmer or Dropper; Modify sets its amount |
+| Modifier / Modify | Off, Stepped speed, Smooth speed, Trimmer, Dropper or Outside; Modify sets the amount |
 | Modify CV | CV input added to Modify per sample, then limited to 0 - 1 |
 
-Modifier defaults to Off. Modifiers process Send before the external effects:
-In applies them again on every repeat, Out preserves the internal repeats, and
-Feed records the processed Return. Live dry and memory dry bypass modifiers.
+Modifier defaults to Off. The modifiers sit in the echo loop: In applies them
+again on every repeat, Out keeps the repeats plain and modifies only what is
+heard, and Feed records the modified echo. Outside replaces them with the
+modules between Send and Return, in the same three places. Live dry and memory
+dry bypass modifiers.
 
 | Modifier | Modify, from 0 to 1 |
 | --- | --- |
 | Stepped speed | Rates -4, -3, -2, -1.5, -1, -0.75, -0.5, 0, 0.5, 0.75, 1, 1.5, 2, 3, 4; evenly spaced knob positions |
-| Smooth speed | Continuous -2x to +2x; noon stops, 0.75 is ordinary +1x |
-| Trimmer | Stepped. Noon is unchanged; left keeps the start of each echo, right keeps its end (3/4, 2/3, 1/2, 1/3, 1/4, 1/6, 1/8), and the kept slice repeats to fill the echo |
-| Dropper | Noon is unchanged; left drops at random (new drops every echo), right repeats a 16-step pattern every echo. Drops vary from shallow and smooth to deep and abrupt; the last 10% of each side moves toward 5 ms grains |
+| Smooth speed | -2x to +2x, even in pitch: stopped in a narrow band at noon, 1/4x just off noon, 1/2x at about 0.36 and 0.64, ordinary +1x at 0.75, 2x at the ends |
+| Trimmer | Stepped. Noon is unchanged; left keeps the start of each echo, right keeps its end (3/4, 2/3, 1/2, 1/3, 1/4, 1/6, 1/8) and silences the rest, so each echo gets shorter. Cuts have 3 ms edges |
+| Dropper | Noon is unchanged; left drops at random (new drops every echo), right repeats a 16-step pattern every echo. Drops vary from shallow and smooth to deep and abrupt; the last quarter of each side moves toward 15 ms grains, half of them kept |
+| Outside | The echo leaves through Send and comes back through a Discipline Return; Modify does nothing |
 
 Negative speed reverses a complete captured Size window, up to 30 s. Above a
-30 s Size, Speed captures and plays each half of the echo separately. Each Size boundary
-captures a new completed window, with a 1 ms restart crossfade. Slow rates
-read only part of each window; fast rates wrap within the captured window. Capturing
-windows changes the placement of transients and startup audio; it is a rhythmic
-effect, with unchanged echo timing at +1x. Playback above 1x uses a windowed-sinc
-antialias filter; stopped playback fades to silence instead of holding DC.
-Changes of mode and speed smooth over 10 ms; rhythm gates have 1 ms ramps.
+30 s Size, Speed captures and plays each half of the echo separately. Each Size
+boundary captures the echo just completed. Slow rates read only part of each
+window; fast rates wrap within it. Each restart and wrap is a splice of up to
+10 ms (at most half of one fast window), and the outgoing read keeps moving
+through the audio around its window, so a splice joins two moving sounds
+rather than a held one. Capturing windows changes the placement of transients
+and startup audio; it is a rhythmic effect, with unchanged echo timing at +1x.
+Playback above 1x uses a windowed-sinc antialias filter; stopped playback fades
+to silence instead of holding DC. Changes of mode and speed smooth over 10 ms.
 
 The clock shares Auto Scan's decision phase. It takes a completed Size change
-at its next wrap, continues through On/bypass, Loop, Clear and Pair changes,
-and restarts at activation. Modifier gates compensate for the Return's one
-host period, so their audible phase follows the Size clock.
+at its next wrap, continues through On/bypass, Loop and Clear, and restarts at
+activation. The modifiers follow the same phase.
 
 Scan and Spread targets snap to whole multiples of Size and clamp inside the
 memory. Moves use a short local scrub and a 60 ms crossfade, so even a full
@@ -89,15 +100,15 @@ memory. Moves use a short local scrub and a 60 ms crossfade, so even a full
 the pending target. Snap-backs use 30 ms. Complementary fade weights avoid a
 volume boost on correlated audio. At maximum Auto
 Scan the excursion stays away until the setting is reduced. History that has
-not been recorded, or was cleared, plays silence. Loop uses the external return
-in In routing and internal full-Size feedback in Out and Feed. Size can change
+not been recorded, or was cleared, plays silence. Loop holds the modified echo
+in In routing and the plain full-Size echo in Out and Feed. Size can change
 without erasing a held loop. Loop releases back to Repeats over 50 ms.
 
-Feed records only Repeats times Return, independently of Level and memory dry.
-Memory dry monitors playback; Collect provides memory overdubbing. Send carries
-only the echo tap. There is no feedback path at the host block period. Wipe
-mutes the direct echo output; in Feed, processed returns still enter memory
-and can be heard later through memory dry.
+Feed records only Repeats times the echo, independently of Level and memory
+dry. Memory dry monitors playback; Collect provides memory overdubbing. Send
+carries only the echo tap. There is no feedback path at the host block period.
+Wipe mutes the echo output; in Feed, the echo still enters memory and can be
+heard later through memory dry.
 
 Spread is off when its snapped offset is zero. In Scanning mode the present
 tap is omitted, so turning on Spread does not add another copy of live dry.
@@ -139,7 +150,7 @@ to try it without installing. Both descriptors are in the same binary:
 | Discipline | `https://github.com/ABustos2606/discipline#discipline` | 38 |
 | Discipline Return | `https://github.com/ABustos2606/discipline#return` | 4 |
 
-Discipline's LV2 version is 0.2.0; Return remains 0.1.1. Discipline requires
+Discipline's LV2 version is 0.4.0; Return's is 0.2.0. Discipline requires
 `urid:map`; Return declares it optional and requires no host features. Neither has a
 custom UI. Both offer `lv2:hardRTCapable`. Block length comes from optional
 LV2 options: nominal, then maximum, then a 128-frame fallback. Correct echo
@@ -194,10 +205,12 @@ make test-hosts
 
 This check starts a private dummy JACK server, loads both plugins in jalv, then
 patches Discipline Send through external effects into the input-only Return
-in Ingen with one and four processing threads. It checks exact echo timing and
-decay in all three routings, Size clock pulses, BPM sync, enabled-port bypass, Wipe, Memory dry,
-Dry kill, Always recording, a filter in the return path, feedback
-rejection, and control/Pair restoration with empty audio buffers after reload.
+in Ingen with one and four processing threads. It checks the echo inside
+Discipline with the Return unused, exact Outside echo timing and decay in all
+three routings, Size clock pulses, BPM sync, enabled-port bypass, Wipe, Memory
+dry, Dry kill, Always recording, a filter in the return path, feedback
+rejection, and restoration of saved controls (including the unused Pair) with
+empty audio buffers after reload.
 It stops only its own child processes. Logs go
 to `build/host-smoke/`. The default period is 1024 frames to tolerate WSL
 scheduling; use `python3 tests/host_smoke.py build/discipline.lv2 --period 128`
@@ -206,7 +219,7 @@ Add `--clock-divider` when Peepo's PolyLV2 clock divider is on `LV2_PATH` to
 check a real module dividing Size triggers by four.
 
 For offline listening, render a mono or stereo PCM16/24/32 or float32 WAV through
-the actual bundle, with a direct Send-to-Return cable:
+the actual bundle (Modifier 5, Outside, uses a direct Send-to-Return cable):
 
 ```sh
 make render

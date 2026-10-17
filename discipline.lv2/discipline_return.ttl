@@ -17,9 +17,9 @@
     doap:license <https://spdx.org/licenses/MIT> ;
     doap:maintainer [ foaf:name "Alejandro Bustos" ; foaf:homepage <https://github.com/ABustos2606> ] ;
     doap:homepage <https://github.com/ABustos2606/discipline> ;
-    rdfs:comment "Brings the sound from Discipline Send back in. Set the same Pair. Both plugins must run in the same host process." ;
-    lv2:minorVersion 1 ;
-    lv2:microVersion 1 ;
+    rdfs:comment "Brings the repeats from Discipline Send back in, when Discipline Modifier is Outside. One per patch; both plugins must run in the same host process." ;
+    lv2:minorVersion 2 ;
+    lv2:microVersion 0 ;
     lv2:optionalFeature lv2:hardRTCapable, options:options, urid:map ;
     options:supportedOption bufsz:nominalBlockLength, bufsz:maxBlockLength ;
     lv2:port
@@ -39,17 +39,19 @@
         a lv2:InputPort, lv2:ControlPort ;
         lv2:index 2 ;
         lv2:symbol "pair" ;
-        lv2:name "Pair" ;
+        lv2:name "Pair (unused)" ;
+        rdfs:comment "Not used. Kept so older patches load." ;
         lv2:minimum 1 ;
         lv2:maximum 16 ;
         lv2:default 1 ;
-        lv2:portProperty lv2:integer
+        lv2:portProperty lv2:integer, pprops:notOnGUI
     ],
     [
         a lv2:OutputPort, lv2:ControlPort ;
         lv2:index 3 ;
         lv2:symbol "paired" ;
-        lv2:name "Paired" ;
+        lv2:name "Found" ;
+        rdfs:comment "On while a Discipline with Modifier Outside is running." ;
         lv2:minimum 0 ;
         lv2:maximum 1 ;
         lv2:portProperty lv2:toggled

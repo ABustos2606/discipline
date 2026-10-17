@@ -25,6 +25,19 @@ The plugin URI is `https://github.com/ABustos2606/discipline#`, not Peepo's name
 
 ## Send and return: two plugins, not one
 
+**Update after the first Pi test, 17 October 2026** ([feedback](pi-feedback-2026-10-17.md)).
+The echo now runs inside Discipline, as on the original: a fresh Discipline
+with default controls is a delay, with no cable or second module. The
+modifiers sit in its loop. The Return is used only when Modifier is
+**Outside** (value 5): then the echo leaves through Send and comes back
+through the Return, with the user's modules in between, in place of the
+built-in modifiers. There is no Pair ID: one pair per host process, and the
+Return joins the Discipline on Outside. Without Return audio, Outside keeps
+the echo inside, so a missing Return can't silence it. The Pair ports stay,
+hidden and unread, so saved patches load. Wipe is renamed "Wipe: no echo" and
+moved to the last page in Peepo. The rest of this section describes the
+Outside path.
+
 Ingen refuses connections that create a loop. When a connection is added, Ingen works out a new order to run the plugins in. If the connection closes a loop, that step fails and the connection is rejected with `COMPILATION_FAILED` and a "Feedback compiling ..." log line (Peepo's `reference/upstream/ingen/src/server/events/Connect.cpp:137`, `CompiledGraph.cpp`). So a cable from a plugin's send, through other modules, back to the same plugin's return can never be patched.
 
 Discipline is two plugins in the same bundle, sharing one buffer:
@@ -35,12 +48,12 @@ Discipline ── send ──▶ [any modules] ──▶ Discipline Return
 
 - **Discipline** records the input into the memory, reads the playback positions, runs the echo, and outputs the echo on its send.
 - **Discipline Return** writes the processed audio back into Discipline. Discipline reads it on the next audio block. That adds one block of delay (about 2.7 ms at 128 samples), which doesn't matter because the shortest echo is 50 ms.
-- The return goes to a different place for each routing (manual p. 50), set by the routing control on Discipline:
+- The return (or, for any other Modifier, the modified echo) goes to a different place for each routing (manual p. 50), set by the routing control on Discipline:
     - **IN:** into the echo's Repeats feedback loop, so the modules are applied again on every repeat. This is the main Modify sound.
     - **FEED:** into the memory, so everything heard is recorded.
     - **OUT:** into Discipline's output only, in place of the plain echo. Every echo sounds the same. Patching modules after Discipline's output would also process the dry signal.
-- The two instances find each other through a shared "pair" ID control. Beebo's `loop_common_in/out` modules appear to be the same kind of pair.
-- The user always wires send to return, either directly or through effects. A plugin can't tell whether a port is patched (Ingen connects unpatched ports to silence), so the plugin shouldn't try to guess.
+- The two instances find each other through a registry inside the shared binary: one pair per host process (originally a "pair" ID control, dropped after the Pi test).
+- On Outside the user wires send to return, either directly or through effects. A plugin can't tell whether a port is patched (Ingen connects unpatched ports to silence), so the plugin doesn't guess; it only knows whether a Return is running and delivering audio.
 
 ## Modulation through CV
 
@@ -50,7 +63,7 @@ Auto-scan is not part of the ramp engine and must be built in. It is Habit's def
 
 Some of the six built-in modifiers can wait, and some can't:
 
-- **Filter (B2) and Stability (A2)** are covered by existing modules patched between Discipline and Discipline Return.
+- **Filter (B2) and Stability (A2)** are covered by existing modules patched between Discipline and Discipline Return, with Modifier on Outside.
 - **Trimmer (A3)** cuts each echo in time with Size. **Dropper (B3)** in pattern mode drops audio at the same place in every echo. **Stepped and Smooth Speed (A1, B1)** play each echo faster, slower, stopped or reversed. All three need the echo's timing.
 - A **Size clock output** (a CV trigger at each echo boundary) lets external modules sync to the echo. Speed and reverse probably need to be built in, because they read the echo buffer differently.
 
@@ -153,5 +166,30 @@ gates are in [Milestone 3 validation](milestone-3-validation.md).
 - [x] Choose the license: MIT.
 - [ ] Milestone 1: the Discipline and Discipline Return pair, the shared memory, a separate echo loop, Size changes by crossfade, IN / OUT / FEED routing of the return, a Clear that can't cause xruns, and the `.ttl` files with CV inputs.
 - [ ] Milestone 2: Collect, Scan AUTO and MANUAL with Size-locked positions, Spread, Loop, Memory Dry and Wipe, and bypass behaviour (`lv2:enabled`, ALWAYS, TRAILS).
+**Pi feedback update, 17 October 2026.** The first Pi test found Discipline
+unusable: the echo existed only through the Return, so an unpaired Return
+(Pair 3 against 1) silenced it, and with it every modifier. Changes:
+
+- The echo, its Repeats loop and the modifiers run inside Discipline. IN
+  repeats the modified echo, OUT repeats the plain echo and modifies what is
+  heard, FEED records the modified echo. Echo timing is unchanged (Size
+  exactly), and the modifiers follow the Size clock with no lead.
+- Modifier gains **Outside** (5), which routes the echo through Send and the
+  Return as before. Send is silent on any other choice. The Return is claimed
+  only on Outside and kept until the crossfade back inside has finished.
+  The crossfade follows whether Return audio actually arrives, per sample.
+- Pair is ignored and hidden (`notOnGUI`); one pair per host process.
+  Discipline 0.4.0, Return 0.2.0. No port, symbol or URI changed.
+- Modifier changes from the code review (still to tune by ear against the
+  original): Speed splices last up to 10 ms (was 1 ms), and the outgoing read
+  keeps moving through real audio instead of holding a sample; a splice that
+  starts during another keeps the louder head. Smooth speed is even in pitch
+  (1/4x just off noon, 1x at 0.75, 2x at the ends) with a narrow stop at noon,
+  so less of the knob is very slow. Trimmer silences the cut part instead of
+  repeating the kept slice, so each echo gets shorter. Dropper's grain zone
+  covers the last quarter of each side, with 15 ms soft-edged grains, half
+  kept (was 5 ms over the last tenth).
+- Wipe is named "Wipe: no echo" and has its own last page in Peepo.
+
 - [ ] Milestone 3 release: Size clock, Stepped and Smooth Speed/reverse, Trimmer and Dropper implemented; physical Pi/listening validation pending.
 - [ ] Lay out the control ports to fit Peepo's catalogue overlay format.

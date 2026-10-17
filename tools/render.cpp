@@ -82,8 +82,8 @@ int main(int argc, char** argv)
         const float level = setting(argv, argc, 6, 0.5f, 0, 1), routing = setting(argv, argc, 7, 0, 0, 2);
         test::require(std::floor(routing) == routing, "routing must be 0 (In), 1 (Feed) or 2 (Out)");
         const float tail = setting(argv, argc, 8, std::min(120.0f, size * 0.008f), 0, 120);
-        const float modifier = setting(argv, argc, 9, 0, 0, 4), modify = setting(argv, argc, 10, 0.5f, 0, 1);
-        test::require(std::floor(modifier) == modifier, "modifier must be an integer from 0 to 4");
+        const float modifier = setting(argv, argc, 9, 0, 0, 5), modify = setting(argv, argc, 10, 0.5f, 0, 1);
+        test::require(std::floor(modifier) == modifier, "modifier must be an integer from 0 to 5");
         const uint64_t frames = input.frames.size() + static_cast<uint64_t>(std::llround(input.rate * double(tail)));
         test::require(frames <= (UINT32_MAX - 50) / 8, "render exceeds RIFF size limit");
         test::Library library(argv[1]); test::Host host(library, input.rate);

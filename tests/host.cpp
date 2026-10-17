@@ -55,6 +55,9 @@ Instance::Instance(const LV2_Descriptor* d, double rate, uint32_t size, bool ret
         control(discipline::MainPort::memory_dry) = 1;
         control(discipline::MainPort::pair) = 1;
         control(discipline::MainPort::modify) = 0.5f;
+        // Outside, so the Effect between Send and Return is in the loop.
+        // Tests of the built-in echo set another Modifier.
+        control(discipline::MainPort::modifier) = 5;
     }
     slice(0, 0); activate();
 }

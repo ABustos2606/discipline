@@ -174,7 +174,8 @@ def main():
 
         for fragment in ("discipline", "return"):
             name = f"discipline_{fragment}"
-            controls = ["-c", "size=50", "-c", "repeats=0", "-c", "level=0"] if fragment == "discipline" else []
+            # Outside, so Send carries the echo; with no Return the echo stays inside.
+            controls = ["-c", "size=50", "-c", "repeats=0", "-c", "level=0", "-c", "modifier=5"] if fragment == "discipline" else []
             host = launch(f"jalv-{fragment}", ["jalv", "-i", "-p", "-n", name, "-x", *controls, URI + fragment])
             wait_for(lambda: bool(probe.get_ports(f"{name}:")), f"jalv did not load {fragment}")
             # JACK ports are registered before jalv activates its client.
@@ -214,6 +215,8 @@ def main():
             control("discipline", "size", 50)
             control("discipline", "repeats", 0)
             control("discipline", "level", 0)
+            # Outside: the echo goes through the -6 dB modules and the Return.
+            control("discipline", "modifier", 5)
             for side in ("l", "r"):
                 protocol.put(f"ingen:/main/fx_{side}", "a ingen:Block ; lv2:prototype <http://lv2plug.in/plugins/eg-amp>")
                 control(f"fx_{side}", "gain", -6.020599913)
@@ -269,7 +272,7 @@ def main():
 
             clock_check(2400)
 
-            def impulse_check(delay=2400, decay=0.25):
+            def impulse_check(delay=2400, decay=0.25, level=0.0625):
                 for attempt in range(3):
                     source["mode"] = "silence"
                     time.sleep(1)
@@ -286,20 +289,31 @@ def main():
                     require(len(dry) == 1, "expected one dry impulse")
                     first = int(dry[0]) + delay
                     require(first + delay < take.shape[1], "capture contains both echoes")
-                    require(abs(float(take[0, first]) - 0.0625) < 1e-5, f"first echo time/level: {take[0, first]}")
-                    require(abs(float(take[1, first]) + 0.125) < 1e-5, "right echo time/level")
-                    require(abs(float(take[0, first + delay]) - 0.0625 * decay) < 1e-5, "repeat time/decay")
+                    require(abs(float(take[0, first]) - level) < 1e-5, f"first echo time/level: {take[0, first]}")
+                    require(abs(float(take[1, first]) + 2 * level) < 1e-5, "right echo time/level")
+                    require(abs(float(take[0, first + delay]) - level * decay) < 1e-5, "repeat time/decay")
                     require(np.isfinite(take).all(), "finite engine output")
                     return
                 raise RuntimeError("WSL xruns prevented a clean impulse capture")
+
+            # Modifier Off: the echo runs inside Discipline and ignores the
+            # Return and the -6 dB modules entirely.
+            # Level 0.5 halves the echo, as the modules do on the Outside path.
+            control("discipline", "modifier", 0)
+            control("discipline", "level", 0.5)
+            impulse_check(decay=0.5)
+            control("discipline", "level", 0.7071067812)
+            control("discipline", "modifier", 5)
+            print(f"PASS Ingen: echo inside Discipline without the Return, {threads} threads", flush=True)
 
             for routing in (0, 1, 2):
                 control("discipline", "routing", routing)
                 impulse_check(decay=0.5 if routing == 2 else 0.25)
                 print(f"PASS Ingen: routing {routing}, exact 50 ms echoes through -6 dB modules, {threads} threads", flush=True)
 
-            # Modify CV through Ingen: Smooth speed at +1x passes echoes; CV
-            # -0.25 reaches noon, which stops them, leaving exactly the dry.
+            # Modify CV through Ingen: Smooth speed (inside the echo, so no
+            # modules) at +1x passes echoes; CV -0.25 reaches noon, which
+            # stops them, leaving exactly the dry.
             source["mode"] = "dc"
             control("discipline", "modifier", 2)
             control("discipline", "modify", 0.75)
@@ -308,7 +322,7 @@ def main():
             wait_for(lambda: observed[0] == 0.125, "Modify CV moves Smooth speed to stop")
             source["cv"] = 0.0
             wait_for(lambda: observed[0] > 0.2, "echoes return when Modify CV is released")
-            control("discipline", "modifier", 0)
+            control("discipline", "modifier", 5)
             print(f"PASS Ingen: Modify CV drives the selected modifier, {threads} threads", flush=True)
             control("discipline", "sync", 1)
             control("discipline", "bpm", 300)
@@ -362,6 +376,7 @@ def main():
             require(engine.poll() is None, "engine survives feedback rejection")
             # Save controls while an OUT echo repeats forever; reloading must
             # restore the controls, while the captured audio starts empty.
+            # Pair is no longer read, but patches that set it must still load.
             control("discipline", "routing", 2)
             control("discipline", "repeats", 1)
             control("discipline", "pair", 7)
@@ -392,7 +407,7 @@ def main():
             main_ttl = (save_path / "main.ttl").read_text()
             require("state:state" not in main_ttl, "audio buffers are not saved as LV2 state")
             source["mode"] = "dc"
-            wait_for(lambda: observed[0] > 0.15, "reloaded pair produces echoes")
+            wait_for(lambda: observed[0] > 0.15, "reloaded Discipline produces echoes")
             print(f"PASS Ingen: saved controls/Pair restore, audio memory discarded, {threads} threads", flush=True)
             require(engine.poll() is None, "Ingen exited")
             protocol.close()

@@ -9,7 +9,9 @@
 
 namespace discipline {
 
-inline constexpr uint32_t kPairCount = 16;
+// One pair per host process: a Return joins the Discipline that has picked
+// Outside. A second Discipline on Outside waits until the first lets go.
+inline constexpr uint32_t kPairCount = 1;
 inline constexpr uint32_t kReturnRing = 8192;
 static_assert(std::atomic<void*>::is_always_lock_free);
 static_assert(std::atomic<uint32_t>::is_always_lock_free);
@@ -53,7 +55,8 @@ public:
     PairClaim(const PairClaim&) = delete;
     PairClaim& operator=(const PairClaim&) = delete;
 
-    void update(const float* control, uint32_t block_length = 128) noexcept;
+    // Claims the shared slot while wanted, releases it otherwise.
+    void update(bool wanted, uint32_t block_length = 128) noexcept;
     void release() noexcept;
     bool paired() const noexcept;
     PairSlot* slot() const noexcept { return slot_; }

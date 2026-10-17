@@ -21,7 +21,8 @@ public:
     // Real-time section: one bounded transport write per frame, no allocation.
     void run(uint32_t frames) noexcept
     {
-        pair.update(ports[static_cast<uint32_t>(ReturnPort::pair)]);
+        // The Pair control is kept for saved patches but no longer read.
+        pair.update(true);
         writer.write(pair.slot(), ports[0], ports[1], frames, host.block);
         const uint64_t main = pair.slot() ? pair.slot()->main_frames.load(std::memory_order_acquire) : 0;
         stale = main == last_main ? stale + frames : 0;

@@ -34,7 +34,7 @@ Discipline::Discipline(double rate, HostConfig config, uint32_t seed) noexcept
     for (auto* gain : {&level_, &repeats_, &in_mix_, &out_mix_, &feed_mix_}) { gain->configure(rate, 0.01); }
     memory_dry_.configure(rate, 0.05);
     collect_mix_.configure(rate, 0.01);
-    for (auto* ramp : {&effect_, &wet_, &dry_, &echo_input_, &wipe_}) { ramp->configure(rate, 0.01, 0.01); }
+    for (auto* ramp : {&effect_, &wet_, &dry_, &echo_input_, &wipe_, &outside_}) { ramp->configure(rate, 0.01, 0.01); }
     loop_.configure(rate, 0.01, 0.05);
     echo_gain_.configure(rate);
     feed_gain_.configure(rate);
@@ -58,7 +58,7 @@ void Discipline::activate() noexcept
     pair_.release();
     memory_.reset(); echo_.reset(); clear_.reset(); heads_.reset(); auto_scan_.reset();
     clock_.reset(); modifiers_.clear();
-    echo_gain_.reset(); feed_gain_.reset(); collect_gain_.reset(); return_fade_.reset(0);
+    echo_gain_.reset(); feed_gain_.reset(); collect_gain_.reset(); return_fade_.reset(0); outside_.reset(0);
     last_slot_ = nullptr; epoch_ = 0;
     transport_ = fresh_from_ = stale_frames_ = 0;
     last_return_ = {};
@@ -97,7 +97,14 @@ uint64_t Discipline::size_frames(float milliseconds, float beats, float bpm, boo
 
 void Discipline::run(uint32_t frames) noexcept
 {
-    pair_.update(port(MainPort::pair), host_.block);
+    // Pair (port 26) is kept for saved patches but no longer read: the Return
+    // joins whichever Discipline has picked Outside.
+    const int modifier = static_cast<int>(control(MainPort::modifier, 0, 0, dsp::kOutside) + 0.5f);
+    const bool outside = modifier == dsp::kOutside;
+    // The Return stays claimed, and Send running, until the echo has faded
+    // back inside.
+    const bool outward = outside || outside_.value() > 0;
+    pair_.update(outward, host_.block);
     PairSlot* slot = pair_.slot();
     const uint32_t epoch = slot ? slot->epoch.load(std::memory_order_acquire) : 0;
     if (slot != last_slot_ || epoch != epoch_) {
@@ -116,7 +123,6 @@ void Discipline::run(uint32_t frames) noexcept
     const float beats = control(MainPort::size_beats, 1, 0.125f, 128);
     const float bpm = control(MainPort::bpm, 120, 30, 300);
     const bool sync = control(MainPort::sync, 0) >= 0.5f;
-    const int modifier = static_cast<int>(control(MainPort::modifier, 0, 0, 4) + 0.5f);
     const float modify = control(MainPort::modify, 0.5f);
     const int routing = static_cast<int>(control(MainPort::routing, 0, 0, 2) + 0.5f);
     const bool enabled = control(MainPort::enabled, 1) >= 0.5f;
@@ -157,6 +163,7 @@ void Discipline::run(uint32_t frames) noexcept
     if (clear_high && !clear_high_) { clear_.request(); }
     clear_high_ = clear_high;
     bool slice_fault = false;
+    const int inner_modifier = outside ? 0 : modifier;
 
     for (uint32_t i = 0; i < frames; ++i, ++transport_) {
         const float l = std::clamp(level + cv(MainPort::level_cv, i), 0.0f, 1.0f);
@@ -168,7 +175,8 @@ void Discipline::run(uint32_t frames) noexcept
             in_mix_.reset(routing == 0); feed_mix_.reset(routing == 1); out_mix_.reset(routing == 2);
             size_ = size_frames(milliseconds, beats, bpm, sync, cv(MainPort::size_cv, i));
             tap_.reset(size_ - host_.block);
-            modifiers_.reset(modifier, amount);
+            modifiers_.reset(inner_modifier, amount);
+            outside_.reset(outside);
             effect_.reset(enabled); wet_.reset(enabled || trails); wipe_.reset(!wipe);
             dry_.reset(dry_kill == 0 || (dry_kill == 2 && !enabled));
             echo_input_.reset(enabled && !looping); loop_.reset(looping);
@@ -214,6 +222,8 @@ void Discipline::run(uint32_t frames) noexcept
             if (!dsp::finite(ret)) { ret = {}; slice_fault = true; }
             last_return_ = dsp::ceiling(ret);
         } else { ++stale_frames_; }
+        // While the Return is not heard, the Outside crossfade does its fade-in.
+        if (available && outside_.value() == 0) { return_fade_.reset(1); }
         ret = last_return_ * static_cast<float>(return_fade_.tick(available ? 1.0 : 0.0));
         if (echo_discard_ && wet_enabled == 0) {
             echo_.clear(); modifiers_.clear(); echo_gain_.reset(); last_return_ = {}; ret = {};
@@ -229,10 +239,21 @@ void Discipline::run(uint32_t frames) noexcept
         const auto valid_from = memory_.valid_from();
         const float memory_gain = clear_.tick(memory_);
         if (memory_.valid_from() != valid_from) { collect_gain_.reset(); }
+        const auto reads = tap_.read_pair(echo_, host_.block);
+        // The modifiers sit in the echo loop and read it at the full Size.
+        // Outside replaces them with the Return, one host period behind Send.
+        const auto inner = modifiers_.process(echo_, reads.feedback, timing, inner_modifier, amount);
+        // Outside needs Return audio. While none arrives (no Return, or it
+        // stopped) the echo stays inside, so a missing Return can't silence it.
+        // Just after a claim the first Return period is still on its way.
+        const bool pending = !available && slot && pair_.paired() && transport_ < fresh_from_ + 2 * host_.block;
+        const float outside_mix = outside_.tick(pending ? outside_.value() : outside && available);
+        const auto echo = outside_mix == 0 ? inner : outside_mix == 1 ? ret : inner * (1 - outside_mix) + ret * outside_mix;
+        dsp::Frame send = outward ? reads.send : dsp::Frame{};
         if (moving) {
-            // Feed recirculates only Return. Level and memory monitoring cannot
+            // Feed recirculates only the echo. Level and memory monitoring cannot
             // create extra loop gain or a feedback loop at the host period.
-            const auto feed = ret * (repeat_gain * feed_mix);
+            const auto feed = echo * (repeat_gain * feed_mix);
             const auto old = memory_.read(memory_.capacity(), 256); // Before overwrite, faded at validity boundary.
             const auto overdub = collect_gain_.process(old * (0.7f * collect_mix * memory_gain));
             memory_.push((memory_mode == 3 ? dry : dsp::Frame{}) + overdub + feed_gain_.process(feed));
@@ -241,14 +262,14 @@ void Discipline::run(uint32_t frames) noexcept
         const float mdry_gain = memory_dry_.tick(wipe || memory_dry == 2 || (memory_dry == 1 && heads_.scanning()));
         const auto monitored = !wipe && memory_dry == 1 ? heads_.history() * memory_gain : mem;
         const auto memory_output = monitored * (mdry_gain * effect_gain);
-        const auto reads = tap_.read_pair(echo_, host_.block);
-        dsp::Frame send = modifiers_.process(echo_, reads.send, timing.ahead(host_.block, current_size), host_.block, modifier, amount);
-        const auto normal_feedback = echo_gain_.process((ret * in_mix + reads.feedback * out_mix) * repeat_gain);
+        // IN repeats the modified echo; OUT repeats the plain one and modifies
+        // only what is heard.
+        const auto normal_feedback = echo_gain_.process((echo * in_mix + reads.feedback * out_mix) * repeat_gain);
         // Feed has no ordinary echo feedback, but Loop must still hold its echo.
-        const auto held_feedback = dsp::ceiling(ret * in_mix + reads.feedback * (1 - in_mix));
+        const auto held_feedback = dsp::ceiling(echo * in_mix + reads.feedback * (1 - in_mix));
         dsp::Frame echo_input = loop_gain == 1 ? held_feedback :
             mem * input_gain + normal_feedback * (1 - loop_gain) + held_feedback * loop_gain;
-        const auto wet_output = ret * (wet_gain * audible_wet) + memory_output;
+        const auto wet_output = echo * (wet_gain * audible_wet) + memory_output;
         // Keep untouched dry samples bit-exact, including signed zero.
         dsp::Frame output{wet_output.l == 0 ? (dry_gain == 1 ? dry.l : dry.l * dry_gain) : dry.l * dry_gain + wet_output.l,
                           wet_output.r == 0 ? (dry_gain == 1 ? dry.r : dry.r * dry_gain) : dry.r * dry_gain + wet_output.r};
@@ -264,7 +285,7 @@ void Discipline::run(uint32_t frames) noexcept
     }
     if (slot) { slot->main_frames.store(transport_, std::memory_order_release); }
     if (auto* paired = port(MainPort::paired)) {
-        *paired = pair_.paired() && stale_frames_ < static_cast<uint64_t>(rate_ * 0.5) ? 1.0f : 0.0f;
+        *paired = outside && pair_.paired() && stale_frames_ < static_cast<uint64_t>(rate_ * 0.5) ? 1.0f : 0.0f;
     }
     if (slice_fault) {
         fault_ = true; echo_.clear(); modifiers_.clear(); echo_gain_.reset(); feed_gain_.reset();

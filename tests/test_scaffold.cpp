@@ -43,13 +43,15 @@ struct Instance {
         check(handle, "instantiate");
         for (uint32_t p = 0; p < count; ++p) { d->connect_port(handle, p, buffers[p].data()); }
         buffers[is_return ? 2 : 26][0] = 1.0f;
-        if (!is_return) { buffers[8][0] = 60000.0f; }
+        if (!is_return) { buffers[8][0] = 60000.0f; buffers[35][0] = 5.0f; } // Modifier: Outside
+
         if (d->activate) { d->activate(handle); }
     }
     ~Instance() { descriptor->cleanup(handle); }
     Instance(const Instance&) = delete;
     void run(uint32_t frames = 0) { descriptor->run(handle, frames); }
     void pair(float id) { buffers[count == 4 ? 2 : 26][0] = id; }
+    void outside(bool on) { buffers[35][0] = on ? 5.0f : 0.0f; }
     bool paired() const { return buffers[count == 4 ? 3 : 34][0] == 1.0f; }
 };
 
@@ -104,6 +106,8 @@ void test_audio(const LV2_Descriptor* main)
 
 void test_pairs(const LV2_Descriptor* main, const LV2_Descriptor* ret)
 {
+    // One pair per process: the Return joins the Discipline that picked
+    // Outside. A second one waits; the Pair control is ignored.
     for (bool return_first : {false, true}) {
         Instance m(main), r(ret, true), duplicate_m(main), duplicate_r(ret, true);
         if (return_first) { r.run(); m.run(); } else { m.run(); r.run(); }
@@ -111,12 +115,16 @@ void test_pairs(const LV2_Descriptor* main, const LV2_Descriptor* ret)
         check(m.paired() && r.paired(), "pair creation order");
         duplicate_m.run(); duplicate_r.run();
         check(!duplicate_m.paired() && !duplicate_r.paired(), "duplicate ownership");
-        m.pair(16); m.run(); r.run();
-        check(!m.paired() && !r.paired(), "Pair change releases old slot");
-        r.pair(16); r.run(); m.run();
-        check(m.paired() && r.paired(), "Pair 16 joins");
-        duplicate_m.run(); duplicate_r.run(); duplicate_m.run();
-        check(duplicate_m.paired() && duplicate_r.paired(), "duplicate retries released slot");
+        m.pair(16); r.pair(3); m.run(); r.run();
+        check(m.paired() && r.paired(), "Pair control is ignored");
+        m.outside(false); m.run(); r.run();
+        check(!m.paired() && !r.paired(), "leaving Outside releases the Return");
+        duplicate_m.run(); duplicate_r.run(); r.run(); duplicate_m.run();
+        check(duplicate_m.paired() && r.paired(), "another Discipline on Outside takes the free Return");
+        m.outside(true); m.run();
+        check(!m.paired(), "the Return stays with the Discipline that holds it");
+        main->deactivate(duplicate_m.handle); m.run(); r.run(); m.run();
+        check(m.paired() && r.paired(), "released Return goes to the waiting Discipline");
         main->deactivate(m.handle); r.run();
         check(!r.paired(), "deactivate releases");
         main->activate(m.handle); m.run(); r.run();
@@ -140,9 +148,9 @@ void test_pairs(const LV2_Descriptor* main, const LV2_Descriptor* ret)
                          std::numeric_limits<float>::infinity()}) {
         Instance m(main), r(ret, true);
         m.pair(value); r.pair(value); m.run(); r.run(); m.run();
-        check(m.paired() && r.paired(), "Pair finite/clamped/rounded");
+        check(m.paired() && r.paired(), "any old Pair value still pairs");
     }
-    std::cout << "PASS pair: both orders, collisions, changes, cleanup, reactivation, invalid values\n";
+    std::cout << "PASS pair: both orders, one pair per process, Outside claims, cleanup, reactivation, old Pair values\n";
 }
 
 void test_concurrent_cleanup(const LV2_Descriptor* main, const LV2_Descriptor* ret)

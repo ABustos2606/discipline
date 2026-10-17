@@ -8,7 +8,8 @@ namespace discipline::dsp {
 class SpeedReader {
 public:
     bool configure(double rate) noexcept {
-        fade_length_ = std::max(2U, static_cast<uint32_t>(std::lround(rate * 0.001)));
+        // Splices last up to 10 ms, shorter when a fast window wraps sooner.
+        fade_length_ = std::max(2U, static_cast<uint32_t>(std::lround(rate * 0.01)));
         weights_.reset(new (std::nothrow) Frame[fade_length_]);
         kernels_.reset(new (std::nothrow) float[bands * phases * taps]);
         if (!weights_ || !kernels_) { return false; }
@@ -40,66 +41,73 @@ public:
     // The echo ring holds two windows plus the fade margin; Modifiers caps
     // a window at half the ring.
     void reset() noexcept {
-        current_ = old_ = {}; initialized_ = old_hold_ = false;
-        last_ = held_ = {}; phase_ = fade_length_;
+        current_ = old_ = {}; initialized_ = false;
+        phase_ = fade_ = fade_length_;
     }
-    Frame tick(const StereoRing& ring, uint64_t size, uint64_t phase, uint32_t lead, double speed, bool audible) noexcept {
+    Frame tick(const StereoRing& ring, uint64_t size, uint64_t phase, double speed, bool audible) noexcept {
         const bool boundary = phase == 0;
         if (boundary || !initialized_ || size != current_.size) {
-            // A fast wrap can still be fading when Size restarts. Preserve
-            // that mixed output without adding a third read head.
-            old_hold_ = initialized_ && phase_ < fade_length_;
-            held_ = last_;
-            old_ = current_;
-            // Send leads the audible boundary by one host period. The forward
-            // offset matches the ordinary tap at +1x; reverse starts at the
-            // last captured sample. Neither path can read unwritten audio.
-            // A Size fade can commit inside the one-period Send lead. Rebuild
-            // that window at its existing boundary rather than waiting an
-            // entire new Size to correct a length predicted before the commit.
+            outgoing(current_);
+            // The window is the echo just completed: forward starts where the
+            // ordinary tap reads, reverse at the last captured sample. A length
+            // change away from a boundary rebuilds the window from that boundary.
             const uint64_t elapsed = initialized_ && !boundary ? phase : 0;
-            double position = (speed < 0 ? static_cast<double>(size - 1) : static_cast<double>(lead % size)) + elapsed * speed;
+            double position = (speed < 0 ? static_cast<double>(size - 1) : 0.0) + elapsed * speed;
             position = std::fmod(position, static_cast<double>(size));
             if (position < 0) { position += size; }
             current_ = {ring.position() - std::min(ring.position(), elapsed), size, position};
-            phase_ = initialized_ ? 0 : fade_length_; initialized_ = true;
+            start_fade(size, speed);
+            if (!initialized_) { phase_ = fade_; }
+            initialized_ = true;
         }
         Frame result{};
         if (audible) {
             result = read(ring, current_, speed);
-            if (phase_ < fade_length_) {
-                const Frame weights = weights_[phase_];
-                result = (old_hold_ ? held_ : read(ring, old_, speed)) * weights.l + result * weights.r;
+            if (phase_ < fade_) {
+                const Frame weights = weights_[static_cast<uint64_t>(phase_) * (fade_length_ - 1) / (fade_ - 1)];
+                result = read(ring, old_, speed) * weights.l + result * weights.r;
             }
         }
-        if (phase_ < fade_length_) {
-            if (!old_hold_) { old_.position = std::clamp(old_.position + speed, 0.0, static_cast<double>(old_.size - 1)); }
+        if (phase_ < fade_) {
+            // The outgoing head runs on past its window into the audio around
+            // it, so a splice joins two moving sounds rather than a held one.
+            old_.position += speed;
             ++phase_;
         }
         const double next = current_.position + speed;
         if (next >= current_.size || next < 0) {
-            old_hold_ = phase_ < fade_length_;
-            held_ = result;
-            if (phase_ >= fade_length_) {
-                old_ = current_;
-                old_.position = std::clamp(next, 0.0, static_cast<double>(old_.size - 1));
-            }
-            phase_ = 0;
+            Head ending = current_;
+            ending.position = next;
+            outgoing(ending);
+            start_fade(current_.size, speed);
             current_.position = next < 0 ? next + current_.size : next - current_.size;
         } else { current_.position = next; }
-        last_ = result;
         return result;
     }
 private:
     struct Head { uint64_t end = 0, size = 1; double position = 0; };
+    // A splice that starts during another keeps the louder of the two heads
+    // as the outgoing one. A wrap one sample before a Size restart (exact
+    // rates such as reverse 1x) then fades from the head actually heard.
+    void outgoing(const Head& ending) noexcept {
+        if (!initialized_ || phase_ >= fade_ || 2 * phase_ >= fade_) { old_ = ending; }
+    }
+    void start_fade(uint64_t size, double speed) noexcept {
+        // At most half of one fast window, so wraps rarely overlap.
+        const double chunk = static_cast<double>(size) / std::max(1.0, std::fabs(speed));
+        fade_ = static_cast<uint32_t>(std::clamp(chunk * 0.5, 2.0, static_cast<double>(fade_length_)));
+        phase_ = 0;
+    }
+    // Reads outside the window are real audio: older audio before it, and
+    // after it whatever has been written, else the latest written sample.
     static Frame sample(const StereoRing& ring, const Head& head, int64_t index) noexcept {
-        const double absolute = static_cast<double>(head.end) - head.size +
-            std::clamp<int64_t>(index, 0, static_cast<int64_t>(head.size - 1));
-        if (absolute < 0 || absolute >= static_cast<double>(ring.position())) { return {}; }
-        return ring.read(ring.position() - static_cast<uint64_t>(absolute));
+        const int64_t absolute = static_cast<int64_t>(head.end) - static_cast<int64_t>(head.size) + index;
+        const int64_t latest = static_cast<int64_t>(ring.position()) - 1;
+        if (absolute < 0 || latest < 0) { return {}; }
+        return ring.read(ring.position() - static_cast<uint64_t>(std::min(absolute, latest)));
     }
     Frame read(const StereoRing& ring, const Head& head, double speed) const noexcept {
-        const auto index = static_cast<int64_t>(head.position);
+        const auto index = static_cast<int64_t>(std::floor(head.position));
         const float fraction = static_cast<float>(head.position - index);
         if (std::fabs(speed) <= 1) {
             return hermite(sample(ring, head, index - 1), sample(ring, head, index),
@@ -121,8 +129,7 @@ private:
     std::unique_ptr<Frame[]> weights_;
     std::unique_ptr<float[]> kernels_;
     Head current_, old_;
-    Frame last_{}, held_{};
-    uint32_t phase_ = 0, fade_length_ = 2;
-    bool initialized_ = false, old_hold_ = false;
+    uint32_t phase_ = 0, fade_ = 2, fade_length_ = 2;
+    bool initialized_ = false;
 };
 } // namespace discipline::dsp

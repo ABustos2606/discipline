@@ -7,44 +7,9 @@
 #include <array>
 
 namespace discipline::dsp {
-// Real-time: reads the echo line at a whole-frame delay. A delay jump
-// crossfades over 1 ms; both heads keep moving at the normal rate.
-class TrimReader {
-public:
-    bool configure(double rate) noexcept {
-        fade_length_ = std::max(2U, static_cast<uint32_t>(std::lround(rate * 0.001)));
-        weights_.reset(new (std::nothrow) Frame[fade_length_]);
-        if (!weights_) { return false; }
-        constexpr double pi = 3.141592653589793;
-        for (uint32_t i = 0; i < fade_length_; ++i) {
-            const float b = static_cast<float>(0.5 - 0.5 * std::cos(pi * i / (fade_length_ - 1)));
-            weights_[i] = {1 - b, b};
-        }
-        reset(); return true;
-    }
-    void reset() noexcept { current_ = old_ = 0; phase_ = fade_length_; initialized_ = hold_ = false; last_ = held_ = {}; }
-    Frame tick(const StereoRing& ring, uint64_t delay) noexcept {
-        if (!initialized_) { current_ = delay; initialized_ = true; }
-        else if (delay != current_) {
-            // A jump inside a fade continues from the last mixed sample.
-            hold_ = phase_ < fade_length_; held_ = last_;
-            old_ = current_; current_ = delay; phase_ = 0;
-        }
-        Frame result = ring.read(current_);
-        if (phase_ < fade_length_) {
-            const Frame weights = weights_[phase_++];
-            result = (hold_ ? held_ : ring.read(old_)) * weights.l + result * weights.r;
-        }
-        last_ = result;
-        return result;
-    }
-private:
-    std::unique_ptr<Frame[]> weights_;
-    uint64_t current_ = 0, old_ = 0;
-    uint32_t phase_ = 0, fade_length_ = 2;
-    bool initialized_ = false, hold_ = false;
-    Frame last_{}, held_{};
-};
+// Modifier 5 sends the echo out through Send and back through the Return,
+// in place of the built-in modifiers.
+inline constexpr int kOutside = 5;
 
 class Modifiers {
 public:
@@ -52,33 +17,41 @@ public:
         rate_ = rate;
         max_window_ = static_cast<uint64_t>(std::llround(rate * 30));
         for (auto& gain : mix_) { gain.configure(rate, 0.01); }
-        for (auto* smooth : {&amount_, &speed_, &unity_, &trimming_}) { smooth->configure(rate, 0.01); }
+        for (auto* smooth : {&amount_, &speed_, &unity_}) { smooth->configure(rate, 0.01); }
         drop_gain_.configure(rate, 0.001, 0.001);
+        trim_gain_.configure(rate, 0.003, 0.003);
         stop_gain_.configure(rate, 0.005, 0.005);
-        return reader_.configure(rate) && trimmer_.configure(rate);
+        return reader_.configure(rate);
     }
-    // Real-time: modifiers act on Send. OUT's feedback stays unmodified;
-    // IN/FEED receive the modified signal through the normal Return path.
+    // Real-time: modifiers process the echo at its full Size, inside the
+    // loop. IN and FEED repeat the result; OUT repeats the plain echo.
     void reset(int mode, float amount) noexcept {
         for (size_t i = 0; i < mix_.size(); ++i) { mix_[i].reset(static_cast<int>(i) == mode); }
         speed_mode_ = mode == 1 ? 1 : 2;
         const auto speed = playback_rate(speed_mode_, amount);
         amount_.reset(amount); speed_.reset(static_cast<float>(speed)); unity_.reset(speed == 1);
-        trimming_.reset(trim_step(amount) != 0);
-        drop_gain_.reset(1); reader_.reset(); trimmer_.reset();
+        drop_gain_.reset(1); trim_gain_.reset(1); reader_.reset();
         stop_gain_.reset(static_cast<float>(std::min(1.0, std::fabs(speed) / 0.05)));
     }
-    void clear() noexcept { reader_.reset(); trimmer_.reset(); }
+    void clear() noexcept { reader_.reset(); }
     static double playback_rate(int mode, float amount) noexcept {
         if (mode == 1) {
             constexpr double steps[]{-4, -3, -2, -1.5, -1, -0.75, -0.5, 0, 0.5, 0.75, 1, 1.5, 2, 3, 4};
             return steps[static_cast<size_t>(std::lround(std::clamp(amount, 0.0f, 1.0f) * 14))];
         }
-        const double value = 4.0 * amount - 2;
+        // Smooth: stopped in a small band at noon, then pitch moves evenly in
+        // octaves: 1/4x just off noon, 1x at 3/4 of each side, 2x at the end.
+        const double x = 2.0 * std::clamp(amount, 0.0f, 1.0f) - 1;
+        constexpr double stop = 0.04, unity = (0.5 - stop) / (1 - stop);
+        if (std::fabs(x) < stop) { return 0; }
+        const double u = (std::fabs(x) - stop) / (1 - stop);
+        const double magnitude = u <= unity ? std::exp2(-2 + 2 * u / unity) : std::exp2((u - unity) / (1 - unity));
+        const double value = std::copysign(magnitude, x);
         return std::fabs(value - 1) < 1.0 / 128 ? 1 : value;
     }
     // Trimmer has 15 positions: noon is neutral (0); -1..-7 keep the start
-    // of each echo, +1..+7 keep its end, from 3/4 down to 1/8.
+    // of each echo, +1..+7 keep its end, from 3/4 down to 1/8. The rest of
+    // the echo is silent, so each echo gets shorter.
     static int trim_step(float amount) noexcept {
         return static_cast<int>(std::lround(std::clamp(amount, 0.0f, 1.0f) * 14)) - 7;
     }
@@ -86,7 +59,7 @@ public:
         constexpr double keep[]{1, 0.75, 2.0 / 3, 0.5, 1.0 / 3, 0.25, 1.0 / 6, 0.125};
         return keep[std::abs(step)];
     }
-    Frame process(const StereoRing& echo, Frame plain, EchoPhase timing, uint32_t lead, int mode, float amount) noexcept {
+    Frame process(const StereoRing& echo, Frame plain, EchoPhase timing, int mode, float amount) noexcept {
         if (mode == 1 || mode == 2) { speed_mode_ = mode; }
         const float setting = amount_.tick(amount);
         const double target_speed = playback_rate(speed_mode_, amount);
@@ -96,18 +69,15 @@ public:
         for (size_t i = 0; i < weights.size(); ++i) { weights[i] = mix_[i].tick(static_cast<int>(i) == mode); }
         const float speed_weight = weights[1] + weights[2];
         const auto window = speed_window(timing);
-        const auto pitched = reader_.tick(echo, window.length, window.phase, lead, speed, speed_weight > 0 && unity < 1);
+        const auto pitched = reader_.tick(echo, window.length, window.phase, speed, speed_weight > 0 && unity < 1);
         const float stop_gain = stop_gain_.tick(static_cast<float>(std::min(1.0, std::fabs(speed) / 0.05)));
         const auto shifted = unity == 1 ? plain : plain * unity + pitched * ((1 - unity) * stop_gain);
-        const int step = trim_step(amount);
-        const float trimming = trimming_.tick(step != 0);
-        const auto sliced = trimmer_.tick(echo, trim_delay(window, lead, step));
-        const auto trimmed = trimming == 0 ? plain : plain * (1 - trimming) + sliced * trimming;
+        const float trim = trim_gain_.tick(trim_target(timing, trim_step(amount)));
         if (timing.boundary()) { ++echo_count_; }
         const float drop = drop_gain_.tick(drop_target(timing, setting));
         if (weights[0] == 1) { return plain; }
-        if ((speed_weight == 1 && unity == 1) || (weights[3] == 1 && trimming == 0) || (weights[4] == 1 && drop == 1)) { return plain; }
-        return plain * (weights[0] + drop * weights[4]) + shifted * speed_weight + trimmed * weights[3];
+        if ((speed_weight == 1 && unity == 1) || (weights[3] == 1 && trim == 1) || (weights[4] == 1 && drop == 1)) { return plain; }
+        return plain * (weights[0] + drop * weights[4] + trim * weights[3]) + shifted * speed_weight;
     }
 private:
     // A captured window is read for one more window, so it can be at most
@@ -117,19 +87,12 @@ private:
         const uint64_t half = timing.length / 2;
         return timing.phase < half ? EchoPhase{timing.phase, half} : EchoPhase{timing.phase - half, timing.length - half};
     }
-    // Trimmer keeps a slice of each window and repeats it to fill the window.
-    // Send reads delay W - lead at window phase 0, so echo position p at phase
-    // phi is at delay (W - lead) + phi - p. Delays stay below 2W.
-    static uint64_t trim_delay(EchoPhase window, uint32_t lead, int step) noexcept {
-        const uint64_t base = window.length > lead ? window.length - lead : 1;
-        if (step == 0) { return base; }
-        const auto slice = std::max<uint64_t>(1, static_cast<uint64_t>(std::llround(window.length * trim_keep(step))));
-        const uint64_t repeat = window.phase - window.phase % slice;
-        if (step < 0) { return base + repeat; }
-        // The end of this echo is already in the line unless the slice is
-        // shorter than the host period; then the previous echo's end is used.
-        const int64_t delay = static_cast<int64_t>(slice) - static_cast<int64_t>(lead) + static_cast<int64_t>(repeat);
-        return static_cast<uint64_t>(delay >= 1 ? delay : delay + static_cast<int64_t>(window.length));
+    // Trimmer opens a gate over the kept part of each echo; the gain ramp
+    // gives each cut a 3 ms edge.
+    static float trim_target(EchoPhase timing, int step) noexcept {
+        if (step == 0) { return 1; }
+        const auto kept = std::max<uint64_t>(1, static_cast<uint64_t>(std::llround(timing.length * trim_keep(step))));
+        return step < 0 ? timing.phase < kept : timing.phase >= timing.length - kept;
     }
     static double smoothstep(double x) noexcept { x = std::clamp(x, 0.0, 1.0); return x * x * (3 - 2 * x); }
     static uint32_t hash(uint32_t value) noexcept {
@@ -146,7 +109,9 @@ private:
         const uint32_t salt = random ? hash(static_cast<uint32_t>(echo) * 0x9E3779B9U + 0x632BE5ABU) : 0;
         const uint32_t key = hash(static_cast<uint32_t>(step) ^ salt);
         if (unit(key) >= density) { return {false, 0, 1}; }
-        double depth = 1, edge = std::max(1.0, std::min(rate_ * 0.0005, width * 0.25));
+        // Grains get soft edges, so the granular end of the knob sounds like
+        // grains rather than clicks.
+        double depth = 1, edge = std::max(1.0, width * 0.15);
         if (shaped) {
             const double shape = unit(hash(key + 0x9E3779B9U)), softness = unit(hash(key + 0x7F4A7C15U));
             depth = shape > 0.6 ? 1 : 0.35 + shape;
@@ -170,23 +135,23 @@ private:
         return static_cast<float>(1 - depth * envelope);
     }
     // Dropper: noon is neutral; left drops at random, right repeats a pattern.
-    // The last 10% of either side moves toward a 5 ms grain grid.
+    // The last quarter of either side moves toward a 15 ms grain grid, with
+    // half of the grains kept.
     float drop_target(EchoPhase timing, float amount) const noexcept {
         if (amount == 0.5f) { return 1; }
         const bool random = amount < 0.5f;
         const double depth = std::fabs(amount - 0.5) * 2;
         const double density = depth * 0.8;
         const float coarse = mask(timing, 16, density, random, true);
-        const float grain = static_cast<float>(std::clamp((depth - 0.9) * 10, 0.0, 1.0));
+        const float grain = static_cast<float>(std::clamp((depth - 0.75) * 4, 0.0, 1.0));
         if (grain == 0) { return coarse; }
-        const auto steps = std::max(16U, static_cast<uint32_t>(std::ceil(timing.length / (rate_ * 0.005))));
-        return coarse * (1 - grain) + mask(timing, steps, density, random, false) * grain;
+        const auto steps = std::max(16U, static_cast<uint32_t>(std::ceil(timing.length / (rate_ * 0.015))));
+        return coarse * (1 - grain) + mask(timing, steps, std::min(density, 0.5), random, false) * grain;
     }
     SpeedReader reader_;
-    TrimReader trimmer_;
     std::array<OnePole, 5> mix_;
-    OnePole amount_, speed_, unity_, trimming_;
-    Ramp drop_gain_, stop_gain_;
+    OnePole amount_, speed_, unity_;
+    Ramp drop_gain_, trim_gain_, stop_gain_;
     double rate_ = 48000;
     uint64_t max_window_ = 1440000;
     uint64_t echo_count_ = 0;

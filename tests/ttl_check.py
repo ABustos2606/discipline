@@ -86,7 +86,8 @@ def check(bundle):
                 require(values[0] == float(lo) and values[-1] == float(hi), f"{symbol}: enum bounds")
                 require(all(str(graph.value(p, RDFS.label)).isascii() for p in points), f"{symbol}: labels")
             if symbol == "pair":
-                require(LV2.integer in props and float(lo) == 1 and float(hi) == 16, "Pair range")
+                # Unused since 0.4, kept so older patches load; hidden from interfaces.
+                require(LV2.integer in props and PPROPS.notOnGUI in props and float(lo) == 1 and float(hi) == 16, "Pair range/hidden")
             if symbol == "enabled":
                 require(LV2.toggled in props and graph.value(port, LV2.designation) == LV2.enabled, "enabled designation")
             if symbol == "clear":
@@ -96,7 +97,7 @@ def check(bundle):
             if symbol == "size_beats":
                 require(graph.value(port, UNITS.unit) == UNITS.beat, "Size beats unit")
             if symbol == "modifier":
-                require(float(lo) == 0 and float(hi) == 4 and float(default) == 0, "modifier range/default")
+                require(float(lo) == 0 and float(hi) == 5 and float(default) == 0, "modifier range/default")
             if symbol == "modify":
                 require(float(lo) == 0 and float(hi) == 1 and float(default) == 0.5, "Modify range/default")
         require(actual == expected, f"{fragment}: ports differ from {enum}: {actual}")
