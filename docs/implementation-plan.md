@@ -24,7 +24,7 @@ Four facts from Ingen's source shape the design. The spec doesn't mention them.
     - `make test` builds and runs the offline tests (section 9);
     - `make lint` runs `lv2lint` on the installed bundle, if it is on the path;
     - `OPT` overrides optimisation flags, the way Peepo's build scripts swap SSE flags for `-mcpu=cortex-a76`. Default `OPT = -O2`. Arch flags are never hard-coded; the Pi build passes `OPT="-O2 -mcpu=cortex-a76"`.
-- **Flags:** `-std=c++17 -fPIC -fvisibility=hidden -Wall -Wextra`, with `-fno-math-errno -fno-trapping-math`. **Not `-ffast-math`**: Discipline relies on finite-value checks (section 8) that fast-math removes. Only `lv2_descriptor` is exported. Link `-shared -Wl,--no-undefined` and statically link `libstdc++` only if Peepo's arm64 root needs it (it hasn't so far).
+- **Flags:** `-std=c++17 -fPIC -fvisibility=hidden -Wall -Wextra`, with `-fno-math-errno -fno-trapping-math`. **Not `-ffast-math`**: Discipline relies on finite-value checks (section 8) that fast-math removes. The Makefile adds `-fno-fast-math` after `OPT`, so a host build that passes its usual fast-math flags still gets IEEE arithmetic. Only `lv2_descriptor` is exported. Link `-shared -Wl,--no-undefined` and statically link `libstdc++` only if Peepo's arm64 root needs it (it hasn't so far).
 - **Releases** are git tags (`v0.1.0` …). Peepo pins a commit, following `tools/ingen-spike/14-more-plugins.sh`.
 
 ### Repository layout
@@ -568,7 +568,7 @@ These are in Peepo's repository, not here. They are listed so the plugin doesn't
 
     The Return gets the description "Brings the sound from Discipline's Send back in. Set the same Pair.", category Delay or Utility.
 3. **Pair on add and duplicate.** When a Discipline is added, the interface could pick the lowest Pair that no Discipline in the patch uses, and a Return added next could take the same value. Duplicating Discipline should do the same. Otherwise the copy stays unpaired, by design (section 4).
-4. **Build step**, pinned commit: `make && make install LV2DIR=/opt/peepo/lib/lv2 OPT="… -mcpu=cortex-a76"` on arm64, following the existing `fetch` / `step` pattern of `14-more-plugins.sh`.
+4. **Build step** (exact step and overlay entry in [Adding Discipline to Peepo](peepo-integration.md)), pinned commit: `make && make install LV2DIR=/opt/peepo/lib/lv2 OPT="… -mcpu=cortex-a76"` on arm64, following the existing `fetch` / `step` pattern of `14-more-plugins.sh`.
 5. **A module with no outputs.** Check that the canvas and the export handle Discipline Return (section 3).
 
 ## 12. Open questions and risks

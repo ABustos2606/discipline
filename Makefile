@@ -24,8 +24,10 @@ OBJECTS := $(patsubst src/%.cpp,$(BUILD_DIR)/obj/%.o,$(SOURCES))
 METADATA := manifest.ttl discipline.ttl discipline_return.ttl
 TTL_TARGETS := $(addprefix $(BUNDLE)/,$(METADATA))
 LV2_CFLAGS = $(shell $(PKG_CONFIG) --cflags lv2)
+# -fno-fast-math comes after OPT: the NaN guards and bit-exact paths need IEEE
+# arithmetic even when a host build passes its usual -ffast-math in OPT.
 COMPILE_FLAGS = $(CPPFLAGS) $(LV2_CFLAGS) $(CXXFLAGS) $(OPT) -std=c++17 -fPIC \
-	-fvisibility=hidden -Wall -Wextra -fno-math-errno -fno-trapping-math $(SAN_FLAGS)
+	-fvisibility=hidden -Wall -Wextra -fno-fast-math -fno-math-errno -fno-trapping-math $(SAN_FLAGS)
 
 .PHONY: all install test test-timing test-hosts render render-examples lint clean
 all: $(BUNDLE)/discipline.so $(TTL_TARGETS)

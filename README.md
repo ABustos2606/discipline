@@ -14,7 +14,8 @@ On/bypass, Always and Trails are active, including Scan/Spread CV. Size clock,
 Stepped Speed, Smooth Speed/reverse, Trimmer and Dropper are active.
 The original 39 ports retain their indices and symbols; Modifier, Modify and
 Modify CV append three main-plugin ports. Physical Pi and listening release gates remain
-pending; see [Milestone 3 validation](docs/milestone-3-validation.md).
+pending; see [Milestone 3 validation](docs/milestone-3-validation.md). Peepo's build step and catalogue entry are
+described in [Adding Discipline to Peepo](docs/peepo-integration.md).
 
 The delay uses two plugins in one bundle:
 
