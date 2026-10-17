@@ -39,6 +39,7 @@ Discipline::Discipline(double rate, HostConfig config, uint32_t seed) noexcept
     echo_gain_.configure(rate);
     feed_gain_.configure(rate);
     collect_gain_.configure(rate);
+    clock_.configure(rate);
 }
 
 bool Discipline::initialize() noexcept
@@ -49,13 +50,14 @@ bool Discipline::initialize() noexcept
     return memory_.allocate(memory_frames) &&
            echo_.allocate(static_cast<uint64_t>(std::ceil(rate_ * 60.05)) + host_.maximum) &&
            tap_.configure(static_cast<uint32_t>(std::lround(rate_ * 0.03))) &&
-           heads_.configure(rate_, memory_frames - margin);
+           heads_.configure(rate_, memory_frames - margin) && modifiers_.configure(rate_);
 }
 
 void Discipline::activate() noexcept
 {
     pair_.release();
     memory_.reset(); echo_.reset(); clear_.reset(); heads_.reset(); auto_scan_.reset();
+    clock_.reset(); modifiers_.clear();
     echo_gain_.reset(); feed_gain_.reset(); collect_gain_.reset(); return_fade_.reset(0);
     last_slot_ = nullptr; epoch_ = 0;
     transport_ = fresh_from_ = stale_frames_ = 0;
@@ -63,7 +65,7 @@ void Discipline::activate() noexcept
     control_phase_ = 0;
     first_ = true; clear_high_ = false; fault_ = false;
     loop_high_ = loop_latched_ = hold_high_ = manual_ = false;
-    memory_mode_ = -1; size_phase_ = 0; size_ = clock_size_ = 1;
+    memory_mode_ = -1; size_ = 1;
     scan_amount_ = spread_amount_ = 0;
     snap_pending_ = echo_discard_ = echo_silent_ = false; was_enabled_ = true;
 }
@@ -114,6 +116,8 @@ void Discipline::run(uint32_t frames) noexcept
     const float beats = control(MainPort::size_beats, 1, 0.125f, 128);
     const float bpm = control(MainPort::bpm, 120, 30, 300);
     const bool sync = control(MainPort::sync, 0) >= 0.5f;
+    const int modifier = static_cast<int>(control(MainPort::modifier, 0, 0, 4) + 0.5f);
+    const float modify = control(MainPort::modify, 0.5f);
     const int routing = static_cast<int>(control(MainPort::routing, 0, 0, 2) + 0.5f);
     const bool enabled = control(MainPort::enabled, 1) >= 0.5f;
     const bool collect = control(MainPort::collect, 0) >= 0.5f;
@@ -154,11 +158,14 @@ void Discipline::run(uint32_t frames) noexcept
     for (uint32_t i = 0; i < frames; ++i, ++transport_) {
         const float l = std::clamp(level + cv(MainPort::level_cv, i), 0.0f, 1.0f);
         const float r = std::clamp(repeats + cv(MainPort::repeats_cv, i), 0.0f, 1.0f);
+        // Per sample: Modify drives speed and rhythm gates, which smooth per sample.
+        const float amount = std::clamp(modify + cv(MainPort::modify_cv, i), 0.0f, 1.0f);
         if (first_) {
             level_.reset(2 * l * l); repeats_.reset(std::min(1.0f, r / 0.97f));
             in_mix_.reset(routing == 0); feed_mix_.reset(routing == 1); out_mix_.reset(routing == 2);
-            size_ = clock_size_ = size_frames(milliseconds, beats, bpm, sync, cv(MainPort::size_cv, i));
+            size_ = size_frames(milliseconds, beats, bpm, sync, cv(MainPort::size_cv, i));
             tap_.reset(size_ - host_.block);
+            modifiers_.reset(modifier, amount);
             effect_.reset(enabled); wet_.reset(enabled || trails); wipe_.reset(!wipe);
             dry_.reset(dry_kill == 0 || (dry_kill == 2 && !enabled));
             echo_input_.reset(enabled && !looping); loop_.reset(looping);
@@ -178,8 +185,9 @@ void Discipline::run(uint32_t frames) noexcept
             spread_amount_ = std::clamp(control(MainPort::spread, 0) + cv(MainPort::spread_cv, i), 0.0f, 1.0f);
         }
         control_phase_ = (control_phase_ + 1) & 31;
-        const bool boundary = size_phase_ == 0;
-        if (++size_phase_ >= clock_size_) { size_phase_ = 0; clock_size_ = tap_.current() + host_.block; }
+        const uint64_t current_size = tap_.current() + host_.block;
+        const auto timing = clock_.tick(current_size);
+        const bool boundary = timing.boundary();
         const bool scan_boundary = boundary || (hold && auto_scan_.state() == dsp::AutoScan::State::present);
         if (moving && !manual && auto_scan_.tick(scan_boundary, scan_amount_, heads_.maximum(), size_, heads_.reached())) {
             heads_.snap(0);
@@ -205,7 +213,7 @@ void Discipline::run(uint32_t frames) noexcept
         } else { ++stale_frames_; }
         ret = last_return_ * static_cast<float>(return_fade_.tick(available ? 1.0 : 0.0));
         if (echo_discard_ && wet_enabled == 0) {
-            echo_.clear(); echo_gain_.reset(); last_return_ = {}; ret = {};
+            echo_.clear(); modifiers_.clear(); echo_gain_.reset(); last_return_ = {}; ret = {};
             return_fade_.reset(0); fresh_from_ = transport_;
             echo_discard_ = false; echo_silent_ = !enabled;
         }
@@ -231,7 +239,7 @@ void Discipline::run(uint32_t frames) noexcept
         const auto monitored = !wipe && memory_dry == 1 ? heads_.history() * memory_gain : mem;
         const auto memory_output = monitored * (mdry_gain * effect_gain);
         const auto reads = tap_.read_pair(echo_, host_.block);
-        dsp::Frame send = reads.send;
+        dsp::Frame send = modifiers_.process(echo_, reads.send, timing.ahead(host_.block, current_size), host_.block, modifier, amount);
         const auto normal_feedback = echo_gain_.process((ret * in_mix + reads.feedback * out_mix) * repeat_gain);
         // Feed has no ordinary echo feedback, but Loop must still hold its echo.
         const auto held_feedback = dsp::ceiling(ret * in_mix + reads.feedback * (1 - in_mix));
@@ -249,14 +257,14 @@ void Discipline::run(uint32_t frames) noexcept
         if (auto* out = port(MainPort::out_r)) { out[i] = output.r; }
         if (auto* out = port(MainPort::send_l)) { out[i] = send.l; }
         if (auto* out = port(MainPort::send_r)) { out[i] = send.r; }
-        if (auto* out = port(MainPort::clock)) { out[i] = 0; }
+        if (auto* out = port(MainPort::clock)) { out[i] = clock_.value(timing); }
     }
     if (slot) { slot->main_frames.store(transport_, std::memory_order_release); }
     if (auto* paired = port(MainPort::paired)) {
         *paired = pair_.paired() && stale_frames_ < static_cast<uint64_t>(rate_ * 0.5) ? 1.0f : 0.0f;
     }
     if (slice_fault) {
-        fault_ = true; echo_.clear(); echo_gain_.reset(); feed_gain_.reset();
+        fault_ = true; echo_.clear(); modifiers_.clear(); echo_gain_.reset(); feed_gain_.reset();
         for (auto index : {MainPort::out_l, MainPort::out_r, MainPort::send_l, MainPort::send_r}) {
             if (auto* out = port(index)) { for (uint32_t i = 0; i < frames; ++i) { out[i] = 0; } }
         }

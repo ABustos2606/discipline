@@ -52,6 +52,8 @@ src/
         rng.hpp              xorshift32, no libc rand()
         auto_scan.hpp        the auto-scan state machine
         clock_out.hpp        Size clock trigger generator
+        modifiers.hpp        selection, speed smoothing, Trimmer and Dropper
+        speed_reader.hpp     captured Size windows, reverse and antialias reader
 tests/
     host.hpp/.cpp            minimal in-process LV2 host: loads descriptors, slices runs
     test_*.cpp               one file per behaviour (section 9)
@@ -107,14 +109,20 @@ Names are short plain ASCII. They say what the control does.
 | 30 | `size_cv` | Size CV | CV in | | | added on Size's log scale |
 | 31 | `spread_cv` | Spread CV | CV in | | | |
 | 32 | `scan_cv` | Scan CV | CV in | | | |
-| 33 | `clock` | Size clock | CV out | | | trigger at each echo boundary (milestone 3; zeros before) |
+| 33 | `clock` | Size clock | CV out | | | 1 ms trigger at each echo boundary |
 | 34 | `paired` | Paired | control out | 0/1 | | 1 when a Return with the same Pair is running |
+| 35 | `modifier` | Modifier | enum | 0 Off, 1 Stepped speed, 2 Smooth speed, 3 Trimmer, 4 Dropper | 0 | appended in milestone 3 |
+| 36 | `modify` | Modify | control | 0 - 1 | 0.5 | amount for the selected modifier |
+| 37 | `modify_cv` | Modify CV | CV in | | | added to Modify, appended in milestone 3 |
+
+Main's LV2 version is 0.2.0 (`lv2:minorVersion 2`) after appending the modifier
+ports. Return stays at 0.1.1. All original symbols and indices remain unchanged.
 
 Enums use `lv2:integer`, `lv2:enumeration` and `lv2:scalePoint`, counting from 0, so Peepo's overlay can name them as choices. Toggles use `lv2:toggled`. `size` uses `pprops:logarithmic`, and `pair` uses `lv2:integer`.
 
 **CV scaling.** Each CV input is added to its knob in the control's *normalised* range (0 – 1 across the control's scale; logarithmic for Size), then clamped. A CV of +1 sweeps the whole range. Before milestone 1 closes, check what Peepo's LFO and random modules actually output (0 – 1 or −1 – 1). If most are unipolar, a `cv_depth`-style attenuverter isn't needed, because Peepo's CV utility modules can scale.
 
-**CV read rate.** CV buffers are per sample. Level and Repeats use the CV per sample (they only scale gains). Scan, Spread and Size read their CV every 32 samples and feed it to their smoothers. That is cheap and fine enough for moves that glide or crossfade anyway.
+**CV read rate.** CV buffers are per sample. Level and Repeats use the CV per sample (they only scale gains). Modify uses its CV per sample too, because Speed and the rhythm gates smooth per sample and an LFO must not step. Scan, Spread and Size read their CV every 32 samples and feed it to their smoothers. That is cheap and fine enough for moves that glide or crossfade anyway.
 
 ### Discipline Return — `https://github.com/ABustos2606/discipline#return`
 
@@ -181,12 +189,12 @@ in ─┬─────────▶ write: in + collect·M[w] (+ FEED: rep·
     │                                │
     │                                ├──────────────▶ memory dry (Off / Scanning / On)
     │                                ▼
-    │           ECHO E (60 s line): write  e_in·(1 - loop) + fb
+    │           ECHO E (Size <= 60 s): write  e_in·(1 - loop) + fb
     │                tap = E[size - B]   (two taps, crossfaded on Size change)
     │                fb  = IN:   loopgain(rep·ret)
     │                      OUT:  loopgain(rep·E[size])
     │                      FEED: 0            (the loop goes through the memory instead)
-    │                send = tap
+    │                send = modifier(tap)
     │                wet  = ret              (in every routing)
     ▼
 out = dry_gain·in + level·wet·(1 - wipe) + mdry_gain·mem
@@ -213,9 +221,9 @@ The spec takes it as given that the user always patches send to return. Without 
 ### 6.1 Buffers and allocation
 
 - **Memory:** 180 s × sample rate × 2 channels, plus 4 guard frames for interpolation. 69.1 MB at 48 kHz. Sized from the rate given to `instantiate`, so 44.1 and 96 kHz also work (96 kHz is 138 MB, noted for the Pi's 2 GB).
-- **Echo line:** 60 s + 50 ms crossfade margin + one max block, stereo. 23.1 MB at 48 kHz.
+- **Echo line:** 60 s + 50 ms crossfade margin + one max block, stereo. 23 MB at 48 kHz. Speed reads a captured window during the next one, up to two windows back, so its windows are capped at 30 s (6.12).
 - **Allocated in `instantiate`** with `std::nothrow`. A failed allocation returns NULL (Ingen reports a failed instantiation) rather than throwing.
-- **Pages are touched in `instantiate`** with a single `memset`. On Linux a fresh allocation is mapped lazily, so the first write to each 4 KB page in `run()` would page-fault in the audio thread: about 23,000 faults spread over the first three minutes. `instantiate` runs outside the audio thread, and touching 92 MB takes tens of milliseconds there. Then call `mlock` on both buffers and ignore failure; JACK setups often allow it.
+- **Pages are touched in `instantiate`** with a single `memset`. On Linux a fresh allocation is mapped lazily, so first writes in `run()` would otherwise page-fault in the audio thread. Instantiate touches about 92 MB at 48 kHz, then calls `mlock` on both buffers and ignores failure; JACK setups often allow it. Speed's roughly 0.22 MB of filter coefficients and its fade table are also populated before `run()`.
 - **Positions are 64-bit frame counters.** They become indices only at access (`idx = pos % len`). The memory has its own clock (`mem_frames`), separate from the host's, because the memory can pause (6.10).
 
 ### 6.2 Clear without xruns: a logical clear
@@ -313,9 +321,54 @@ unity feedback, as it can during normal use.
 ### 6.11 Tempo and the Size clock
 
 - Size in beats = `size_beats × 60 / bpm` s, clamped to 50 ms – 60 s. A BPM change is a Size change, so it crossfades.
-- **Size clock** (`clock`): a phase counter of length Size (the current tap A). At each wrap it writes 1.0 for 1 ms, then 0 (**tune** to Peepo's trigger convention). It is also the beat that auto-scan uses for its decisions. When Size crossfades, the counter takes the new length at its next wrap. The CV port exists from milestone 1 and writes 0 until milestone 3.
+- **Size clock** (`clock`): a phase counter of length Size (the current tap A). At each wrap it writes 1.0 for `round(rate * 0.001)` frames, then 0. It is also the beat that Auto Scan uses for its decisions. When Size crossfades, the counter adopts the completed tap's length at its next wrap. Activation starts with a pulse at sample zero. Bypass, Loop, Clear and Pair changes leave the phase running. This drives Peepo's clock divider in the Ingen host check.
 
-### 6.12 Output and safety
+### 6.12 Built-in modifiers
+
+- The user selected all four proposed modifiers. `modifier` selects one at a
+  time; `modify` is its normalized amount, plus `modify_cv` read per sample
+  and clamped to 0 - 1. Off is the default. Mode weights,
+  amount and speed use 10 ms one-poles; all state advances per sample.
+- Processing is on Send, ahead of any patched effects. IN recirculates the
+  modified Return; OUT keeps its full-Size internal feedback unmodified; FEED
+  records Repeats times modified Return into memory. Live dry and memory dry
+  are unaffected. External filters and stability effects remain patchable.
+- Stepped Speed's 15 equally spaced settings are -4, -3, -2, -1.5, -1, -0.75,
+  -0.5, 0, 0.5, 0.75, 1, 1.5, 2, 3 and 4. Smooth Speed is -2 through +2,
+  stopped at noon, unity at 0.75 (with a small unity detent). Speed glides
+  intentionally; Size still changes through the original fixed-tap crossfade.
+- Speed references completed Size windows without copying audio. A new window
+  starts each Size with a 1 ms complementary raised-cosine crossfade. Reverse
+  starts at its last sample and runs backward across the full window. Slow
+  playback reads only part before the next restart; fast playback wraps within
+  the window, with a short fade at wraps. Window boundaries clamp interpolation
+  neighbors, so reads never pull future or unrelated audio into a captured clip.
+  If a wrap fade overlaps a Size restart, the next fade starts from the last
+  mixed sample, retaining continuity without adding a third read head.
+  A Size commit inside Send's one-period lead corrects the window relative
+  to that same boundary, rather than retaining an old length for a full period.
+- A window is read while the next is recorded, so it can be up to two windows
+  old. To fit the 60 s echo line, Speed windows are capped at 30 s: above a
+  30 s Size each echo is split into two halves, each captured and played on
+  its own. Non-unity speeds then play the newest half, so forward playback
+  starts about Size/2 behind instead of Size. Trimmer and Dropper keep the
+  full Size.
+- Hermite interpolation handles rates up to unity; faster playback uses a
+  32-tap windowed-sinc antialias filter, with precomputed cutoff/fractional-phase
+  tables. No coefficient generation occurs in `run()`. Positive unity crossfades
+  to the ordinary tap and becomes bit-exact. At stop a 5 ms gain ramp removes
+  held DC. Snapshot restarts deliberately change transient placement and startup
+  audio; they are a rhythmic effect rather than a latency-neutral pitch shifter.
+- Trimmer's left half cuts the start, its right half cuts the end. Noon is
+  bit-exact neutral and both endpoints silence the echo. Its shaped edges and
+  gain ramp span 1 ms. Dropper uses a repeatable 16-step hash pattern, increasing
+  dropout density with amount. The top 10% crossfades to a roughly 5 ms grain
+  grid. Zero is bit-exact neutral; maximum still contains sound and gaps.
+- Rhythm gates and captured windows use the clock phase advanced by the host
+  period, compensating for Return transport. Echo discard/fault invalidates
+  captured readers in constant time; Clear remains memory-only.
+
+### 6.13 Output and safety
 
 - A final finite check per slice: if any output sample is NaN or infinite (a module in the loop can produce that), Discipline resets the echo line's feedback state, writes silence for that slice and raises an internal flag. It doesn't throw or log in `run()`. Ingen must never receive a non-finite value (Peepo's catalogue withholds plugins that output one).
 - Non-finite live input is zeroed only at the affected channel/sample. It does not trigger the feedback fault reset or erase the rest of the slice.
@@ -334,11 +387,14 @@ unity feedback, as it can during normal use.
     3. memory: read `M[w]` for Collect (silent if older than `valid_from`), write the new sample unless paused;
     4. memory reads: primary, spread, and fade partners, Hermite-interpolated when fractional;
     5. echo: read crossfaded tap, compute feedback for the routing, write `E`;
-    6. send = tap; wet = ret; out = dry + level·wet + memory dry, with bypass and Dry kill gains;
+    6. send = modifier(tap); wet = ret; out = dry + level·wet + memory dry, with bypass and Dry kill gains;
     7. clock output.
-4. Finite check (6.12). Advance counters.
+4. Finite check (6.13). Advance counters.
 
-**Budget.** About 60 – 100 multiply-adds per stereo sample, mostly the four interpolated memory reads. Memory reads are sequential, so cache misses are rare. Expected well under 1% of one A76 core at 48 kHz. That leaves the worst-case time per `run()` as the real measure (section 9).
+**Budget.** Ordinary delay/memory processing has a few interpolated reads per
+sample. Fast Speed can add two 32-tap stereo reads during a restart fade. Work
+stays bounded, but the former rough CPU estimate does not cover these filters.
+Measure worst-case `run()` and whole-patch xruns on the physical Pi (section 9).
 
 ## 8. Real-time rules, checked
 
@@ -372,6 +428,11 @@ unity feedback, as it can during normal use.
 | `cv` | CV adds and clamps; Size CV sweeping makes at most one fade per 30 ms |
 | `nonfinite` | a NaN from the patched module: output stays finite, recovers |
 | `rt_timing` | 10 simulated minutes with random control changes: report the worst and the 99.9th-percentile `run()` time per period |
+| `m3_clock` | Size clock pulses: exact period and 1 ms width, committed Size, BPM, CV, lifecycle |
+| `m3_speed` | measured pitch, stop without DC, full-window reverse up to 30 s, 30 s chunks above |
+| `m3_alias/neutral`, `m3_rhythm` | antialiasing; bit-exact neutral settings; Trimmer halves; repeating Dropper |
+| `m3_transitions`, `m3_routing/discard` | bounded mode changes, slice independence, IN/OUT/FEED, bypass discard |
+| `m3_modify_cv` | Modify CV adds and clamps, reaches exact neutral and Stepped settings, per sample |
 
 The tests build with `-fsanitize=address,undefined` on the desktop (`make test SAN=1`).
 
@@ -468,6 +529,16 @@ for results and the remaining physical Pi/listening/release gates.
     - Speed and reverse read the echo line at a variable rate from the tap: a second interpolated reader that restarts at each Size boundary, with a short crossfade at each restart.
     - Each chosen modifier gets a selector and an amount, **appended** as new ports (`modifier`, `modify`), with `lv2:minorVersion` raised.
 - **Done when:** the clock triggers a module in step with the echo, and each chosen modifier has a test and a listening note. Tag `v0.3.0`.
+
+**Implementation status, 17 October 2026:** the Size clock and all four
+user-selected modifiers are implemented, including appended ports (Modifier,
+Modify, Modify CV) and the minor-version bump. Speed windows are capped at 30 s
+so the echo line stays at 60 s. Offline checks cover clock phase, measured pitch, full
+reverse windows, alias suppression, neutral settings, rhythm, routing,
+transitions and slicing. Ingen checks the clock through Peepo's actual clock
+divider. [Milestone 3 validation](milestone-3-validation.md) records results and
+reproducible listening comparisons. Physical Pi xruns and listening/tuning are
+pending, so the release gate and `v0.3.0` tag remain open.
 
 ## 11. Peepo-side work
 

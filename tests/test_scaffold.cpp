@@ -33,12 +33,12 @@ const LV2_Feature* features[]{&map_feature, nullptr};
 struct Instance {
     const LV2_Descriptor* descriptor;
     LV2_Handle handle;
-    std::array<std::array<float, 1026>, 35> buffers{};
+    std::array<std::array<float, 1026>, static_cast<uint32_t>(MainPort::count)> buffers{};
     uint32_t count;
 
     explicit Instance(const LV2_Descriptor* d, bool is_return = false)
         : descriptor(d), handle(d->instantiate(d, 8000, ".", is_return ? nullptr : features)),
-          count(is_return ? 4 : 35)
+          count(is_return ? 4 : static_cast<uint32_t>(MainPort::count))
     {
         check(handle, "instantiate");
         for (uint32_t p = 0; p < count; ++p) { d->connect_port(handle, p, buffers[p].data()); }
@@ -76,7 +76,8 @@ void test_audio(const LV2_Descriptor* main)
         for (uint32_t i = 0; i < frames; ++i) {
             check(instance.buffers[0][i] == instance.buffers[2][i], "left passthrough");
             check(instance.buffers[1][i] == instance.buffers[3][i], "right passthrough");
-            check(instance.buffers[4][i] == 0 && instance.buffers[5][i] == 0 && instance.buffers[33][i] == 0, "Send/clock silence");
+            check(instance.buffers[4][i] == 0 && instance.buffers[5][i] == 0, "Send silence");
+            check(instance.buffers[33][i] == 0 || instance.buffers[33][i] == 1, "bounded clock");
         }
         for (uint32_t p : {2U, 3U, 4U, 5U, 33U}) {
             check(instance.buffers[p][frames] == 99.0f, "write past slice boundary");
@@ -94,7 +95,7 @@ void test_audio(const LV2_Descriptor* main)
     instance.run(128);
     check(instance.buffers[0] == left && instance.buffers[1] == right, "in-place passthrough");
     // Unconnected ports and unknown indices must not crash, even for a zero-frame run.
-    for (uint32_t p = 0; p < 35; ++p) { main->connect_port(instance.handle, p, nullptr); }
+    for (uint32_t p = 0; p < static_cast<uint32_t>(MainPort::count); ++p) { main->connect_port(instance.handle, p, nullptr); }
     main->connect_port(instance.handle, 999, nullptr);
     instance.run(128);
     instance.run(0);

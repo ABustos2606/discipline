@@ -100,6 +100,8 @@ def main():
     parser.add_argument("--ingen", default="ingen")
     parser.add_argument("--period", type=int, default=1024,
                         help="dummy JACK period (default: 1024, tolerant of WSL scheduling)")
+    parser.add_argument("--clock-divider", action="store_true",
+                        help="also test Peepo's PolyLV2 clock_divider (must be on LV2_PATH)")
     args = parser.parse_args()
     logdir = Path("build/host-smoke").resolve()
     logdir.mkdir(parents=True, exist_ok=True)
@@ -134,10 +136,11 @@ def main():
         probe = jack.Client("discipline_probe", servername=server_name, no_start_server=True)
         sources = [probe.outports.register(side) for side in ("src_l", "src_r")]
         captures = [probe.inports.register(name) for name in ("cap_l", "cap_r", "send_l", "send_r")]
+        cv_source = probe.outports.register("src_cv")
         observed = [0.0] * 4
         capture = np.zeros((4, 48000 * 4), dtype=np.float32)
         probe_frame = 0
-        source = {"mode": "dc", "pulse": -1}
+        source = {"mode": "dc", "pulse": -1, "cv": 0.0}
         xruns = 0
 
         @probe.set_xrun_callback
@@ -153,6 +156,7 @@ def main():
                 data[:] = level if source["mode"] == "dc" else 0
                 if source["mode"] == "impulse" and probe_frame <= source["pulse"] < probe_frame + frames:
                     data[source["pulse"] - probe_frame] = level
+            cv_source.get_array()[:] = source["cv"]
             for i, port in enumerate(captures):
                 observed[i] = float(port.get_array().mean())
             offset = probe_frame % capture.shape[1]
@@ -198,6 +202,8 @@ def main():
             for side in ("l", "r"):
                 protocol.put(f"ingen:/main/in_{side}", "a lv2:InputPort, lv2:AudioPort")
                 protocol.put(f"ingen:/main/out_{side}", "a lv2:OutputPort, lv2:AudioPort")
+            protocol.put("ingen:/main/clock_out", "a lv2:OutputPort, lv2:CVPort")
+            protocol.put("ingen:/main/modify_in", "a lv2:InputPort, lv2:CVPort")
             for fragment in ("discipline", "return"):
                 protocol.put(f"ingen:/main/{fragment}", f"a ingen:Block ; lv2:prototype <{URI}{fragment}>")
 
@@ -216,6 +222,14 @@ def main():
                 protocol.connect(f"ingen:/main/discipline/out_{side}", f"ingen:/main/out_{side}")
                 protocol.connect(f"ingen:/main/discipline/send_{side}", f"ingen:/main/fx_{side}/in")
                 protocol.connect(f"ingen:/main/fx_{side}/out", f"ingen:/main/return/in_{side}")
+            protocol.connect("ingen:/main/discipline/clock", "ingen:/main/clock_out")
+            protocol.connect("ingen:/main/modify_in", "ingen:/main/discipline/modify_cv")
+            if args.clock_divider:
+                protocol.put("ingen:/main/divider", "a ingen:Block ; lv2:prototype <http://polyeffects.com/lv2/basic_modular#clock_divider>")
+                control("divider", "divider", 4)
+                protocol.put("ingen:/main/divided_out", "a lv2:OutputPort, lv2:CVPort")
+                protocol.connect("ingen:/main/discipline/clock", "ingen:/main/divider/in")
+                protocol.connect("ingen:/main/divider/out", "ingen:/main/divided_out")
             # The Return's input-only shape must compile as a sink in the graph.
             text = protocol.request("Get", "patch:subject <ingen:/main/return>")
             require("in_l" in text and "in_r" in text and "paired" in text, "Ingen Return port discovery")
@@ -224,9 +238,36 @@ def main():
             for side, source_port, destination in zip(("l", "r"), sources, captures):
                 cable(source_port, f"{client_name}:in_{side}")
                 cable(f"{client_name}:out_{side}", destination)
+            cable(f"{client_name}:clock_out", captures[2])
+            cable(cv_source, f"{client_name}:modify_in")
+            if args.clock_divider:
+                cable(f"{client_name}:divided_out", captures[3])
             wait_for(lambda: observed[:2] == [0.125, -0.25], "Ingen passthrough mismatch")
             control("discipline", "level", 0.7071067812)
             control("discipline", "repeats", 0.485)
+
+            def clock_check(period):
+                for attempt in range(3):
+                    time.sleep(0.3)
+                    start, before = probe_frame, xruns
+                    end = start + period * 12
+                    wait_for(lambda: probe_frame >= end, "clock capture did not advance")
+                    if xruns != before:
+                        continue
+                    take = capture[:, np.arange(start, end) % capture.shape[1]].copy()
+                    rising = np.flatnonzero((take[2, 1:] > 0.5) & (take[2, :-1] <= 0.5)) + 1
+                    require(len(rising) >= 10 and np.all(np.diff(rising) == period), "Size clock is sample-exact in Ingen")
+                    for edge in rising[:-1]:
+                        require(np.all(take[2, edge:edge + 48] == 1) and take[2, edge + 48] == 0, "clock is a 1 ms 0/1 trigger")
+                    if args.clock_divider:
+                        divided = np.flatnonzero((take[3, 1:] > 0.5) & (take[3, :-1] <= 0.5)) + 1
+                        require(len(divided) >= 2 and np.all(np.diff(divided) == period * 4), "Peepo clock divider emits one edge per four Size triggers")
+                        require(all(edge in rising for edge in divided), "divider edges line up with the Size clock")
+                    print(f"PASS Ingen: Size clock{' through Peepo clock divider' if args.clock_divider else ''}, {period} frames, {threads} threads", flush=True)
+                    return
+                raise RuntimeError("WSL xruns prevented a clean clock capture")
+
+            clock_check(2400)
 
             def impulse_check(delay=2400, decay=0.25):
                 for attempt in range(3):
@@ -256,11 +297,25 @@ def main():
                 control("discipline", "routing", routing)
                 impulse_check(decay=0.5 if routing == 2 else 0.25)
                 print(f"PASS Ingen: routing {routing}, exact 50 ms echoes through -6 dB modules, {threads} threads", flush=True)
+
+            # Modify CV through Ingen: Trimmer noon passes echoes; CV -0.5
+            # reaches its silent endpoint, leaving exactly the live dry.
+            source["mode"] = "dc"
+            control("discipline", "modifier", 3)
+            control("discipline", "modify", 0.5)
+            wait_for(lambda: observed[0] > 0.2, "Trimmer noon passes echoes")
+            source["cv"] = -0.5
+            wait_for(lambda: observed[0] == 0.125, "Modify CV moves Trimmer to its silent endpoint")
+            source["cv"] = 0.0
+            wait_for(lambda: observed[0] > 0.2, "echoes return when Modify CV is released")
+            control("discipline", "modifier", 0)
+            print(f"PASS Ingen: Modify CV drives the selected modifier, {threads} threads", flush=True)
             control("discipline", "sync", 1)
             control("discipline", "bpm", 300)
             control("discipline", "size_beats", 0.5)
             control("discipline", "repeats", 0)
             impulse_check(delay=4800, decay=0)
+            clock_check(4800)
             control("discipline", "sync", 0)
             print(f"PASS Ingen: Size follows BPM/beats, {threads} threads", flush=True)
 
@@ -311,6 +366,8 @@ def main():
             control("discipline", "repeats", 1)
             control("discipline", "pair", 7)
             control("return", "pair", 7)
+            control("discipline", "modifier", 3)
+            control("discipline", "modify", 0.5)
             source["mode"] = "silence"
             time.sleep(0.25)
             source["pulse"] = probe_frame + args.period * 6 + 13
@@ -325,7 +382,8 @@ def main():
                 protocol.connect(f"ingen:/main/in_{side}", f"ingen:/main/restored/in_{side}")
                 protocol.connect(f"ingen:/main/restored/out_{side}", f"ingen:/main/out_{side}")
             for block_name, symbol, expected in (("discipline", "pair", 7), ("return", "pair", 7),
-                                                  ("discipline", "size", 50), ("discipline", "repeats", 1)):
+                                                  ("discipline", "size", 50), ("discipline", "repeats", 1),
+                                                  ("discipline", "modifier", 3), ("discipline", "modify", 0.5)):
                 text = protocol.request("Get", f"patch:subject <ingen:/main/restored/{block_name}/{symbol}>")
                 values = re.findall(r'ingen:value "([0-9.eE+-]+)"', text)
                 require(values and abs(float(values[-1]) - expected) < 1e-5, "saved control restores: " + symbol)

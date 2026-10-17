@@ -234,6 +234,13 @@ void rt_timing(const Library& lib)
             host.main->control(MainPort::always) = (rng >> 23) & 1;
             host.main->control(MainPort::trails) = (rng >> 24) & 1;
             host.main->control(MainPort::enabled) = (rng >> 25) & 1;
+            host.main->control(MainPort::modifier) = static_cast<float>((rng >> 26) % 5);
+            host.main->control(MainPort::modify) = ((rng >> 7) % 1001) * 0.001f;
+        }
+        // Modify CV sweeps per sample, so Speed and the gates change inside each period.
+        const float depth = ((rng >> 3) % 2001) * 0.001f - 1;
+        for (uint32_t i = 0; i < host.block; ++i) {
+            host.main->buffers[static_cast<uint32_t>(MainPort::modify_cv)][i] = depth * static_cast<float>(std::sin((host.frame + i) * 0.002));
         }
         host.period([](uint64_t f) { const float s = 0.1f * std::sin(f * 0.03); return Frame{s, -s}; }, cable);
         for (uint32_t i = 0; i < host.block; ++i) { require(std::isfinite(host.main->buffers[2][i]), "finite output under random controls"); }

@@ -46,7 +46,10 @@ enum class MainPort : uint32_t {
     scan_cv = 32,    // cv_in
     clock = 33,      // cv_out
     paired = 34,     // control_out
-    count = 35
+    modifier = 35,   // control_in
+    modify = 36,     // control_in
+    modify_cv = 37,  // cv_in
+    count = 38
 };
 
 enum class ReturnPort : uint32_t {

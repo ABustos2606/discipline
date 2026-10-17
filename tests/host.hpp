@@ -52,8 +52,8 @@ public:
     bool is_return;
     uint32_t block;
     Features features;
-    std::array<float, 35> controls{};
-    std::array<std::vector<float>, 35> buffers;
+    std::array<float, static_cast<uint32_t>(discipline::MainPort::count)> controls{};
+    std::array<std::vector<float>, static_cast<uint32_t>(discipline::MainPort::count)> buffers;
     bool measure = false;
     double last_time = 0;
 };

@@ -3,16 +3,18 @@
 An LV2 stereo delay with a 3-minute memory, written for Peepo and other LV2
 hosts. MIT licensed, Copyright (c) 2026 Alejandro Bustos.
 
-Milestones 1 and 2 implement the stereo delay core and memory controls: 50 ms to 60 s echoes, Repeats,
+Milestones 1-3 implement the stereo delay core, memory controls and timed modifiers: 50 ms to 60 s echoes, Repeats,
 Level, Size in milliseconds or beats at BPM, IN / OUT / FEED routing, Clear,
 and CV inputs for Level, Repeats and Size. Size changes crossfade between fixed
 read positions to preserve pitch. The separate 3-minute memory records the
 input and, in FEED, the processed repeats.
 
 Scan (Auto and Manual), Spread, Collect, Loop/Latch, Memory dry, Wipe, Dry kill,
-On/bypass, Always and Trails are active, including Scan/Spread CV. Size clock
-stays at zero until Milestone 3. All 39 ports
-retain the indices and symbols established in Milestone 0.
+On/bypass, Always and Trails are active, including Scan/Spread CV. Size clock,
+Stepped Speed, Smooth Speed/reverse, Trimmer and patterned Dropper are active.
+The original 39 ports retain their indices and symbols; Modifier, Modify and
+Modify CV append three main-plugin ports. Physical Pi and listening release gates remain
+pending; see [Milestone 3 validation](docs/milestone-3-validation.md).
 
 The delay uses two plugins in one bundle:
 
@@ -51,6 +53,34 @@ two audio inputs and no audio outputs.
 | Wipe | Mutes direct echoes and forces Memory dry On |
 | Dry kill | Off; Always (including bypass); Effect on (passes dry while bypassed) |
 | On / Always / Trails | Bypass through On; Always records while bypassed; Trails lets echoes decay |
+| Size clock | CV output: 1.0 for 1 ms at each Size boundary, otherwise zero |
+| Modifier / Modify | Off, Stepped speed, Smooth speed, Trimmer or Dropper; Modify sets its amount |
+| Modify CV | CV input added to Modify per sample, then limited to 0 - 1 |
+
+Modifier defaults to Off. Modifiers process Send before the external effects:
+In applies them again on every repeat, Out preserves the internal repeats, and
+Feed records the processed Return. Live dry and memory dry bypass modifiers.
+
+| Modifier | Modify, from 0 to 1 |
+| --- | --- |
+| Stepped speed | Rates -4, -3, -2, -1.5, -1, -0.75, -0.5, 0, 0.5, 0.75, 1, 1.5, 2, 3, 4; evenly spaced knob positions |
+| Smooth speed | Continuous -2x to +2x; noon stops, 0.75 is ordinary +1x |
+| Trimmer | Left cuts the start, right cuts the end; noon is unchanged, either endpoint silences the echo |
+| Dropper | Zero is unchanged; a fixed 16-step pattern drops more audio as amount rises; the top 10% moves toward 5 ms grains |
+
+Negative speed reverses a complete captured Size window, up to 30 s. Above a
+30 s Size, Speed captures and plays each half of the echo separately. Each Size boundary
+captures a new completed window, with a 1 ms restart crossfade. Slow rates
+read only part of each window; fast rates wrap within the captured window. Capturing
+windows changes the placement of transients and startup audio; it is a rhythmic
+effect, with unchanged echo timing at +1x. Playback above 1x uses a windowed-sinc
+antialias filter; stopped playback fades to silence instead of holding DC.
+Changes of mode and speed smooth over 10 ms; rhythm gates have 1 ms ramps.
+
+The clock shares Auto Scan's decision phase. It takes a completed Size change
+at its next wrap, continues through On/bypass, Loop, Clear and Pair changes,
+and restarts at activation. Modifier gates compensate for the Return's one
+host period, so their audible phase follows the Size clock.
 
 Scan and Spread targets snap to whole multiples of Size and clamp inside the
 memory. Moves use a short local scrub and a 60 ms crossfade, so even a full
@@ -103,10 +133,11 @@ to try it without installing. Both descriptors are in the same binary:
 
 | Plugin | URI | Ports |
 | --- | --- | --- |
-| Discipline | `https://github.com/ABustos2606/discipline#discipline` | 35 |
+| Discipline | `https://github.com/ABustos2606/discipline#discipline` | 38 |
 | Discipline Return | `https://github.com/ABustos2606/discipline#return` | 4 |
 
-Discipline requires `urid:map`; Return requires no host features. Neither has a
+Discipline's LV2 version is 0.2.0; Return remains 0.1.1. Discipline requires
+`urid:map`; Return declares it optional and requires no host features. Neither has a
 custom UI. Both offer `lv2:hardRTCapable`. Block length comes from optional
 LV2 options: nominal, then maximum, then a 128-frame fallback. Correct echo
 compensation needs the host's actual period. A period must be at most 4096
@@ -137,7 +168,7 @@ make lint DESTDIR="$PWD/build/stage" PREFIX=/opt/peepo
 
 `make lint` prints SKIP if lv2lint is absent. It fails when an installed lv2lint
 reports an error. The remaining author-email warning and validation limits are
-recorded in [the Milestone 2 validation record](docs/milestone-2-validation.md).
+recorded in [the Milestone 3 validation record](docs/milestone-3-validation.md).
 
 For a focused ThreadSanitizer transport check:
 
@@ -161,13 +192,15 @@ make test-hosts
 This check starts a private dummy JACK server, loads both plugins in jalv, then
 patches Discipline Send through external effects into the input-only Return
 in Ingen with one and four processing threads. It checks exact echo timing and
-decay in all three routings, BPM sync, enabled-port bypass, Wipe, Memory dry,
+decay in all three routings, Size clock pulses, BPM sync, enabled-port bypass, Wipe, Memory dry,
 Dry kill, Always recording, a filter in the return path, feedback
 rejection, and control/Pair restoration with empty audio buffers after reload.
 It stops only its own child processes. Logs go
 to `build/host-smoke/`. The default period is 1024 frames to tolerate WSL
 scheduling; use `python3 tests/host_smoke.py build/discipline.lv2 --period 128`
 for a shorter period. These are functional checks, not xrun measurements.
+Add `--clock-divider` when Peepo's PolyLV2 clock divider is on `LV2_PATH` to
+check a real module dividing Size triggers by four.
 
 For offline listening, render a mono or stereo PCM16/24/32 or float32 WAV through
 the actual bundle, with a direct Send-to-Return cable:
@@ -175,14 +208,17 @@ the actual bundle, with a direct Send-to-Return cable:
 ```sh
 make render
 build/render build/discipline.lv2/discipline.so input.wav output.wav 500 0.4 0.5 0 4
-# Arguments after output: Size ms, Repeats, Level, Routing (0 In/1 Feed/2 Out), tail seconds
+# Arguments after output: Size ms, Repeats, Level, Routing (0 In/1 Feed/2 Out), tail seconds, Modifier, Modify
+build/render build/discipline.lv2/discipline.so input.wav reverse.wav 500 0.4 0.5 2 4 2 0.25
+make render-examples                      # synthetic comparisons in build/m3-listening/
 ```
 
 The renderer writes stereo float32 WAV and needs no audio server or extra audio
 libraries. It preserves input sample rate and duplicates mono input to stereo.
 
 The memory and echo buffers use about 92 MB per instance at 48 kHz,
-about 184 MB at 96 kHz. Multiple instances multiply that cost. Buffers will not
+about 184 MB at 96 kHz, plus about 0.22 MB of speed filter coefficients.
+Multiple instances multiply that cost. Buffers will not
 be saved with patches. Allocation, page touching and an optional memory-lock
 attempt happen during instantiation. The shared transport adds about 2 MB per
 loaded library. Clear and activation reset counters without clearing buffers.

@@ -19,7 +19,7 @@ Peepo is a guitar pedal built on a Raspberry Pi 5 (2 GB, Debian 12 arm64) runnin
 ## Host limits that shape the code
 
 - **Ingen rejects feedback loops** (`COMPILATION_FAILED`). That is why Discipline is a pair: Discipline and Discipline Return, in one bundle, sharing a buffer through a "pair" ID control.
-- **xruns are the limit, not average CPU.** Ingen runs the whole patch as one JACK client. In `run()`: no allocation, no locks, no file or console I/O, no bulk work such as clearing a whole buffer at once. Allocate the memory (about 69 MB) and the echo line (about 23 MB) in `instantiate`.
+- **xruns are the limit, not average CPU.** Ingen runs the whole patch as one JACK client. In `run()`: no allocation, no locks, no file or console I/O, no bulk work such as clearing a whole buffer at once. Allocate the memory (about 69 MB) and the echo line (about 23 MB) in `instantiate`, at 48 kHz.
 - **Controls arrive once per audio block.** Smooth every control that changes sound (Level, Repeats, Scan, Spread), or it zippers. Size changes by crossfading two read positions, not by gliding (gliding bends pitch).
 - **Unpatched inputs read silence.** A plugin can't tell whether a port is connected; don't guess.
 - **No LV2 state for buffers.** The memory is lost when a patch reloads. That is accepted.

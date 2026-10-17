@@ -44,7 +44,7 @@ Discipline ── send ──▶ [any modules] ──▶ Discipline Return
 
 ## Modulation through CV
 
-Habit's built-in ramp engine exists because the hardware has no other way to modulate its knobs. Peepo already has CV modules, so Discipline exposes a CV input for each main control (Level, Repeats, Size, Spread, Scan) instead of copying that engine. Each control's value is its knob setting plus its CV input, limited to the control's range. Each control can then follow a different LFO, envelope or random source, which the hardware cannot do.
+Habit's built-in ramp engine exists because the hardware has no other way to modulate its knobs. Peepo already has CV modules, so Discipline exposes a CV input for each main control (Level, Repeats, Size, Spread, Scan, Modify) instead of copying that engine. Each control's value is its knob setting plus its CV input, limited to the control's range. Each control can then follow a different LFO, envelope or random source, which the hardware cannot do.
 
 Auto-scan is not part of the ramp engine and must be built in. It is Habit's default Scan mode. It wanders into the past now and then and snaps back to the present, which a CV random source can't do on its own (see [What the Habit manual says](#what-the-habit-manual-says)).
 
@@ -114,7 +114,7 @@ Checked on 16 October 2026 against the Chase Bliss Habit manual (Peepo's `refere
 
 **Bypass (pp. 20, 33).** Bypassing empties the memory unless COLLECT or ALWAYS is on. With COLLECT, the memory pauses and keeps its audio. Discipline needs an `lv2:enabled` port to know when it is bypassed.
 
-**Memory.** A 3-minute stereo memory at 48 kHz in 32-bit float is about 69 MB. The 60 s echo line needs its own buffer, about 23 MB more. Allocate both when the plugin is instantiated, never in `run()`. The buffers are not saved with patches (no LV2 state); saving 90 MB per patch would be a bad idea anyway.
+**Memory.** A 3-minute stereo memory at 48 kHz in 32-bit float is about 69 MB. The 60 s echo line needs its own buffer, about 23 MB more. Speed and reverse play a captured window during the following one, so a window can be at most 30 s: above a 30 s Size they play two chunks per echo. Allocate both when the plugin is instantiated, never in `run()`. The buffers are not saved with patches (no LV2 state).
 
 ## Milestones
 
@@ -136,8 +136,19 @@ checks. [Validation and remaining release gates](milestone-2-validation.md)
 record the scope. The checkbox below stays open until physical Pi validation
 and the release follow-up are complete.
 
+**Milestone 3 implementation update, 17 October 2026:** the user selected the
+Size clock and all four proposed modifiers: Stepped Speed, Smooth Speed with
+reverse, Trimmer and patterned Dropper. They process Send, preserving the
+existing IN/OUT/FEED return routing. Speed captures complete Size windows and
+restarts with short crossfades; positive unity bypasses that reader. Noon
+stops both speed modes without held DC. Trimmer noon and Dropper zero are
+transparent. Modifier, Modify and Modify CV append ports 35 to 37; existing
+ports and URIs stay fixed. After review, the echo line stays at 60 s and Speed
+windows are capped at 30 s (two chunks per echo above a 30 s Size). Details, tests, listening material and remaining release
+gates are in [Milestone 3 validation](milestone-3-validation.md).
+
 - [x] Choose the license: MIT.
 - [ ] Milestone 1: the Discipline and Discipline Return pair, the shared memory, a separate echo loop, Size changes by crossfade, IN / OUT / FEED routing of the return, a Clear that can't cause xruns, and the `.ttl` files with CV inputs.
 - [ ] Milestone 2: Collect, Scan AUTO and MANUAL with Size-locked positions, Spread, Loop, Memory Dry and Wipe, and bypass behaviour (`lv2:enabled`, ALWAYS, TRAILS).
-- [ ] Milestone 3: a Size clock output, then decide which modifiers (Speed, Trimmer, Dropper) to build in.
+- [ ] Milestone 3 release: Size clock, Stepped and Smooth Speed/reverse, Trimmer and patterned Dropper implemented; physical Pi/listening validation pending.
 - [ ] Lay out the control ports to fit Peepo's catalogue overlay format.

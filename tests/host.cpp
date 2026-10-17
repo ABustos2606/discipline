@@ -54,14 +54,15 @@ Instance::Instance(const LV2_Descriptor* d, double rate, uint32_t size, bool ret
         control(discipline::MainPort::enabled) = 1;
         control(discipline::MainPort::memory_dry) = 1;
         control(discipline::MainPort::pair) = 1;
+        control(discipline::MainPort::modify) = 0.5f;
     }
     slice(0, 0); activate();
 }
 Instance::~Instance() { descriptor->deactivate(handle); descriptor->cleanup(handle); }
 void Instance::activate() { descriptor->activate(handle); }
 void Instance::slice(uint32_t offset, uint32_t frames) {
-    for (uint32_t p = 0; p < (is_return ? 4U : 35U); ++p) {
-        const bool audio = is_return ? p < 2 : (p < 6 || (p >= 28 && p <= 33));
+    for (uint32_t p = 0; p < (is_return ? 4U : static_cast<uint32_t>(discipline::MainPort::count)); ++p) {
+        const bool audio = is_return ? p < 2 : (p < 6 || (p >= 28 && p <= 33) || p == 37);
         descriptor->connect_port(handle, p, audio ? buffers[p].data() + offset : &controls[p]);
     }
     if (measure) {

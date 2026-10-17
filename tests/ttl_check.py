@@ -32,7 +32,7 @@ def check(bundle):
     require(set(manifest.subjects(RDF.type, LV2.Plugin)) ==
             {URIRef(URI + "discipline"), URIRef(URI + "return")}, "manifest descriptors")
     for fragment, enum, filename, count, cls in [
-        ("discipline", "MainPort", "discipline.ttl", 35, LV2.DelayPlugin),
+        ("discipline", "MainPort", "discipline.ttl", 38, LV2.DelayPlugin),
         ("return", "ReturnPort", "discipline_return.ttl", 4, LV2.UtilityPlugin),
     ]:
         plugin = URIRef(URI + fragment)
@@ -40,6 +40,11 @@ def check(bundle):
         require(body is not None, f"missing {enum}")
         declared = re.findall(r"(\w+)\s*=\s*(\d+),\s*//\s*(audio_in|audio_out|control_in|control_out|cv_in|cv_out)", body[1])
         expected = {int(index): (symbol, kind) for symbol, index, kind in declared}
+        if fragment == "discipline":
+            legacy = "in_l in_r out_l out_r send_l send_r level repeats size size_beats sync bpm spread scan scan_mode routing collect loop latch scan_hold clear memory_dry wipe dry_kill always trails pair enabled level_cv repeats_cv size_cv spread_cv scan_cv clock paired".split()
+            require([expected[i][0] for i in range(35)] == legacy, "permanent Milestone 0-2 indices/symbols changed")
+            require(expected[35] == ("modifier", "control_in") and expected[36] == ("modify", "control_in"), "modifier ports must append")
+            require(expected[37] == ("modify_cv", "cv_in"), "Modify CV must append after Modify")
         require(len(declared) == len(expected) == count, f"{enum}: count/duplicate index")
         require(set(expected) == set(range(count)), f"{enum}: non-contiguous indices")
         require(re.search(r"count\s*=\s*" + str(count) + r"\b", body[1]), f"{enum}: count sentinel")
@@ -90,8 +95,12 @@ def check(bundle):
                 require(PPROPS.logarithmic in props and graph.value(port, UNITS.unit) == UNITS.ms, "Size scale/unit")
             if symbol == "size_beats":
                 require(graph.value(port, UNITS.unit) == UNITS.beat, "Size beats unit")
+            if symbol == "modifier":
+                require(float(lo) == 0 and float(hi) == 4 and float(default) == 0, "modifier range/default")
+            if symbol == "modify":
+                require(float(lo) == 0 and float(hi) == 1 and float(default) == 0.5, "Modify range/default")
         require(actual == expected, f"{fragment}: ports differ from {enum}: {actual}")
-    print("PASS ttl_check: 35 Discipline ports, 4 Return ports, features and bundle")
+    print("PASS ttl_check: 38 Discipline ports, 4 Return ports, features and bundle")
 
 
 if __name__ == "__main__":

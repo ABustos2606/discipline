@@ -33,3 +33,11 @@ for tag, bits in ((1, 16), (1, 24), (1, 32), (3, 32)):
     assert abs(samples[0] - 0.25) < 1e-6 and abs(samples[2400 * 2] - 0.25) < 1e-6
     assert abs(samples[4800 * 2]) < 1e-6 and len(samples) == 9600 * 2
 print("PASS renderer: PCM16/24/32 and float32 mono input, stereo output, exact 50 ms echo")
+
+# New optional arguments reach the DSP without changing the live dry impulse.
+trimmed = root / "trimmed.wav"
+subprocess.run([str(binary), str(plugin), str(source), str(trimmed), "50", "0", "0.7071067812", "0", "0.1", "3", "0"], check=True, stdout=subprocess.DEVNULL)
+encoded = trimmed.read_bytes()
+samples = struct.unpack_from("<" + "f" * ((len(encoded) - offset) // 4), encoded, offset)
+assert samples[0] == 0.25 and all(value == 0 for value in samples[2:])
+print("PASS renderer: Modifier/Modify select a fully trimmed echo with dry preserved")

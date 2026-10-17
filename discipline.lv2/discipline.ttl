@@ -18,8 +18,8 @@
     doap:maintainer [ foaf:name "Alejandro Bustos" ; foaf:homepage <https://github.com/ABustos2606> ] ;
     doap:homepage <https://github.com/ABustos2606/discipline> ;
     rdfs:comment "Delay with a 3-minute memory. Cable Send to a Discipline Return through any modules. Size sets echo time; Routing sets where the return feeds back." ;
-    lv2:minorVersion 1 ;
-    lv2:microVersion 1 ;
+    lv2:minorVersion 2 ;
+    lv2:microVersion 0 ;
     lv2:optionalFeature lv2:hardRTCapable, options:options ;
     options:supportedOption bufsz:nominalBlockLength, bufsz:maxBlockLength ;
     lv2:requiredFeature urid:map ;
@@ -343,4 +343,33 @@
         lv2:minimum 0 ;
         lv2:maximum 1 ;
         lv2:portProperty lv2:toggled
+    ],
+    [
+        a lv2:InputPort, lv2:ControlPort ;
+        lv2:index 35 ;
+        lv2:symbol "modifier" ;
+        lv2:name "Modifier" ;
+        lv2:minimum 0 ; lv2:maximum 4 ; lv2:default 0 ;
+        lv2:portProperty lv2:integer, lv2:enumeration ;
+        lv2:scalePoint [ rdfs:label "Off" ; rdf:value 0 ],
+                      [ rdfs:label "Stepped speed" ; rdf:value 1 ],
+                      [ rdfs:label "Smooth speed" ; rdf:value 2 ],
+                      [ rdfs:label "Trimmer" ; rdf:value 3 ],
+                      [ rdfs:label "Dropper" ; rdf:value 4 ]
+    ],
+    [
+        a lv2:InputPort, lv2:ControlPort ;
+        lv2:index 36 ;
+        lv2:symbol "modify" ;
+        lv2:name "Modify" ;
+        lv2:minimum 0 ; lv2:maximum 1 ; lv2:default 0.5
+    ],
+    [
+        a lv2:InputPort, lv2:CVPort ;
+        lv2:index 37 ;
+        lv2:symbol "modify_cv" ;
+        lv2:name "Modify CV" ;
+        lv2:minimum -1 ;
+        lv2:maximum 1 ;
+        lv2:default 0
     ] .

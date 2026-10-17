@@ -10,6 +10,7 @@
 #include "dsp/xfade_tap.hpp"
 #include "dsp/loop_gain.hpp"
 #include "dsp/memory_heads.hpp"
+#include "dsp/modifiers.hpp"
 
 #include <lv2/core/lv2.h>
 #include <array>
@@ -39,6 +40,8 @@ private:
     dsp::CrossfadeTap tap_;
     dsp::MemoryHeads heads_;
     dsp::AutoScan auto_scan_;
+    dsp::ClockOut clock_;
+    dsp::Modifiers modifiers_;
     dsp::OnePole level_, repeats_, in_mix_, out_mix_, feed_mix_;
     dsp::OnePole memory_dry_, collect_mix_;
     dsp::Ramp effect_, wet_, dry_, echo_input_, loop_, wipe_;
@@ -48,7 +51,7 @@ private:
     uint32_t epoch_ = 0;
     uint64_t transport_ = 0, fresh_from_ = 0, stale_frames_ = 0;
     uint32_t control_phase_ = 0;
-    uint64_t size_ = 1, size_phase_ = 0, clock_size_ = 1;
+    uint64_t size_ = 1;
     float scan_amount_ = 0, spread_amount_ = 0;
     dsp::Frame last_return_{};
     bool first_ = true, clear_high_ = false, fault_ = false;
