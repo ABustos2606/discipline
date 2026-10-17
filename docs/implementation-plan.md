@@ -141,12 +141,19 @@ struct PairSlot {
     std::atomic<void*>    owner_return;  // Return instance that claimed it, or null
     std::atomic<uint64_t> written;       // frames the Return has written (release)
     std::atomic<uint64_t> main_frames;   // Discipline's frame counter (release)
-    std::atomic<uint32_t> epoch;         // bumped when either side (re)claims
-    float ring[2][kReturnRing];          // kReturnRing = 8192 frames, static storage
+    std::atomic<uint32_t> epoch;         // bumped on claims, release and resync
+    std::atomic<uint32_t> written_epoch;
+    std::atomic<uint32_t> block_length;
+    struct Cell {
+        std::atomic<uint64_t> stamp;     // epoch and frame tag; 0 while replacing
+        std::atomic<uint64_t> stereo;    // two floats, bit-preserving packing
+    };
+    Cell ring[kReturnRing];              // kReturnRing = 8192 frames
 };
 ```
 
-- **The ring is static memory, owned by neither instance.** Its size is 16 × 8192 × 2 × 4 B = 1 MB. When a Discipline is deleted while its Return is still running on another thread, nothing is left dangling. That rules out the use-after-free a pointer into Discipline's own memory would invite.
+- **The ring is static memory, owned by neither instance.** Its size is about 2 MB including tags. When a Discipline is deleted while its Return is still running on another thread, nothing is left dangling. All cells are page-touched once during instantiation, before either plugin runs.
+- **Cells are atomic.** A plain float ring is not safe when an unconnected peer overtakes the reader or a slot is reused. The writer invalidates the stamp, replaces the packed stereo sample, then publishes its stamp. The reader checks the stamp, loads the stereo sample and checks the stamp again. These cell operations are sequentially consistent; a failed snapshot returns silence without spinning. The tag includes the epoch and the low 32 frame bits; the full 64-bit published write range excludes old or overwritten frames.
 - **Claiming** is a compare-and-swap of `owner_main` (or `owner_return`) from null to `this`, done in `run()` when the Pair value changes. It is lock-free, so it is real-time safe. The old slot is released by compare-and-swap back to null. `deactivate()` and `cleanup()` also release.
 - **A second instance with a taken ID** stays unpaired: no return audio, `paired` = 0. That covers a duplicated module in Peepo that copied the Pair value (section 11).
 - **Patch load order doesn't matter.** Whichever of the two runs first claims its side. The other joins when it runs.
@@ -155,10 +162,10 @@ struct PairSlot {
 
 The Return writes each slice of its input into `ring` at index `written mod kReturnRing`, then publishes `written += n` with release ordering. Discipline reads the return at its own index `r` minus a fixed lag `B`, where `B` is the nominal block length.
 
-- **Alignment.** When it claims, or when it sees `epoch` change, the Return sets `written = main_frames - B`, rounded to the block. In the patched case (Discipline runs first in each period), the sample sent in period *k* is then read back in period *k + 1*: a return delay of exactly `B` frames. Discipline subtracts `B` from the echo tap delay, so Size is exact including the trip through the return (section 5).
-- **Unpatched or reversed order.** The return delay is some other constant; nothing breaks. Read and write regions never overlap, because the ring is 8192 frames and the lag is one block.
-- **Stale return.** Before reading, Discipline checks that `written >= r - B + n` (acquire). If not, the Return is missing, bypassed by the engine or behind. It then reads silence for the missing frames, and after 0.5 s of that sets `paired` = 0. A short fade (64 samples) covers loss and recovery, so they don't click.
-- **Slices.** Both sides count frames per slice, so Ingen's slicing (section 1) doesn't break alignment. Resync happens only on claim or epoch change, never while running.
+- **Alignment.** `main_frames` is an exclusive end. Return starts at `floor((main_frames - 1) / B) * B`, with startup protected against underflow. This gives the current period's start whether main's first call was a full period or just a slice. On a main claim, the persistent slot timeline rounds up to a block boundary, so a previous owner's different block size does not offset the new pair. Zero-frame runs do not establish Return timing. In the patched case, send in period *k* returns in *k + 1*, exactly `B` frames later.
+- **Unpatched or reversed order.** The raw return delay can be another constant. A reversed-order cable supplies the previous Send block. Atomic tags keep any overlapping access safe, including a peer that runs far ahead.
+- **Stale return.** For each sample, main checks the published epoch, 64-bit write range and cell stamp. Missing frames fade out using the last valid sample over 64 frames. After 0.5 s of missing data `paired` becomes 0. New data fades back in. Return also detects a stopped main.
+- **Slices and recovery.** Both sides count samples, independent of slice boundaries. A Return that resumes after missing a period must resync: otherwise its write counter remains behind forever. A gap beyond the normal one-block lead, or a writer over half the ring ahead, bumps the epoch and realigns. This is bounded work, with no ring clear or retry loop.
 
 The test in section 9 sends an impulse from send to return through a cable, under random slicing and both run orders. It checks the delay is `B` in the patched case and constant in every other case.
 
@@ -176,8 +183,8 @@ in ─┬─────────▶ write: in + collect·M[w] (+ FEED: rep·
     │                                ▼
     │           ECHO E (60 s line): write  e_in·(1 - loop) + fb
     │                tap = E[size - B]   (two taps, crossfaded on Size change)
-    │                fb  = IN:   rep·loopgain(ret)
-    │                      OUT:  rep·loopgain(tap)
+    │                fb  = IN:   loopgain(rep·ret)
+    │                      OUT:  loopgain(rep·E[size])
     │                      FEED: 0            (the loop goes through the memory instead)
     │                send = tap
     │                wet  = ret              (in every routing)
@@ -193,7 +200,7 @@ The rule that makes the three routings simple: **the echo you hear is always the
 
 The spec takes it as given that the user always patches send to return. Without that, no echo is heard in any routing. The README and the Peepo module description say so.
 
-**Echo tap compensation.** The tap is read `size - B` frames back, so send → return → output lands at exactly Size. In IN, one trip round the loop also takes exactly Size. Size's minimum (50 ms = 2400 frames) is far above any `B` (≤ 1024).
+**Echo tap compensation.** Send reads `size - B`, so send → return → output lands at exactly Size. IN and FEED include that trip in their loop. OUT's internal feedback instead reads at the full `size`; using the Send tap would shorten every OUT repeat by `B`. Both reads share the same crossfade phase. Instantiation rejects a nominal period of 50 ms or longer, or more than 4096 frames, because one-block transport cannot meet the advertised minimum Size in that configuration.
 
 **Memory reads at "the present".** With Scan and Spread at 0, `p = M[w]` is the sample just written, so the echo is fed the live input (plus Collect). The memory acts as a pre-delay of 0.
 
@@ -211,7 +218,7 @@ The spec takes it as given that the user always patches send to return. Without 
 
 Clearing never touches the buffer. Discipline keeps `valid_from`, a memory frame counter. **Clear sets `valid_from = mem_frames`.** Every memory read (playback positions and Collect's read of `M[w]`) returns 0 for positions older than `valid_from`, with a 256-sample fade at that boundary so the edge doesn't click. Recording overwrites the old data over the next 3 minutes. The cost is O(1) whatever the buffer's size: no `std::fill`, no slices.
 
-- The audible part of Clear is a 20 ms fade-out of every memory read before `valid_from` moves (**tune**), then reads start again from silence.
+- The audible part of Clear is a 20 ms fade-out of every memory read before `valid_from` moves (**tune**), followed by a 256-frame fade-in. Old history is silent; fresh live input continues recording. A second trigger during fade-in begins from the current gain, avoiding a jump.
 - Clear empties the memory only. Echoes already in the echo line ring out, as the manual's memory clear does. If listening shows it should also cut the echo, the echo line gets its own `valid_from` the same way.
 - Bypass without COLLECT or ALWAYS uses the same clear (6.10).
 
@@ -238,6 +245,7 @@ The echo's feedback reads the same crossfaded tap, so the loop length changes wi
 ### 6.5 Repeats and loop gain
 
 - Repeats maps the knob to feedback gain `g`: a smooth curve up to 0.97 of travel, then exactly 1.0 (**tune**).
+- The implemented starting curve is `min(repeats / 0.97, 1)`. Level is `2 * level * level`. Gain smoothers and limiter envelopes keep double-precision state, so they can settle back to exact unity instead of stalling below it through float rounding. Repeats is applied before the feedback limiter. Stereo limiting shares an envelope and has a final ceiling of 4; the dry input and its first memory write remain linear.
 - **`loop_gain`** sits only in the feedback path: the echo feedback in IN and OUT, and the return-to-memory path in FEED. It is a soft limiter. Below a threshold (start −6 dBFS) its gain is exactly 1.0, so normal playing is uncoloured. Above it the gain is reduced, with a fast attack (1 ms) and a slow release (300 ms). At Repeats = 1 echoes build up and then stay at a steady level, "like a loop", instead of running away. In IN it also catches gain added by the patched modules.
 - Nothing nonlinear touches the dry path or the first pass of the input into the memory. That fixes the skeleton's `tanh` on every write.
 - **Collect** (memory overdub) uses a fixed recirculation gain (start 0.7, **tune**) through its own `loop_gain`, so three-minute-old audio comes back quieter and never builds up.
@@ -364,7 +372,7 @@ The tests build with `-fsanitize=address,undefined` on the desktop (`make test S
 
 With Peepo's `tools/ingen-spike/env.sh`:
 
-1. Load both plugins and patch send → a filter → Return. Check `COMPILATION_FAILED` doesn't occur. Then patch Return's output side back toward Discipline's input to confirm that this is still rejected (expected) while the pair works.
+1. Load both plugins and patch send → a filter → Return. Check `COMPILATION_FAILED` doesn't occur. Then try a cable from the external effect's output to Discipline's input to confirm ordinary feedback is rejected while the pair works. Return itself has no audio output.
 2. Save and reload a patch: controls and Pair come back, the buffer doesn't (expected).
 3. Run with `-p 1` and `-p 4` (threads): same `return_latency` result measured with a test signal.
 4. Engine bypass (`ingen:enabled false`) passes in → out and leaves Send silent. The `enabled` port does the real bypass.
@@ -393,6 +401,13 @@ Each has an end check. "Done" means the offline tests pass on x86-64 and arm64, 
 - Discipline passes input to output and outputs silence on Send. Return claims its slot.
 - **Done when:** `make`, `make install DESTDIR=…` and `lv2lint` are clean, and both plugins load in jalv and in Ingen under WSL. Tag `v0.0.1`, so Peepo can wire its build step early.
 
+**Implementation status, 16 October 2026:** scaffolding is implemented, including
+all 35 main ports and 4 Return ports. Offline tests pass on x86-64 (also under
+ASan/UBSan) and arm64 under emulation. Staged installation, jalv and Ingen with
+one and four processing threads pass. `lv2lint` has no errors and two documented
+metadata warnings per plugin. See [the validation record](milestone-0-validation.md)
+for coverage and limits. The physical Pi check and release tag remain pending.
+
 ### Milestone 1 — the core (spec milestone 1)
 
 1. `stereo_ring`, `interp`, `smoother`, `xfade_tap`, `loop_gain`, with unit tests.
@@ -403,6 +418,15 @@ Each has an end check. "Done" means the offline tests pass on x86-64 and arm64, 
 6. Level, CV inputs for Level, Repeats and Size. Scan and Spread CV arrive with milestone 2's Scan and Spread, but are already declared.
 7. `nonfinite`, `rt_timing`.
 - **Done when:** all tests above pass. A patch in Ingen under WSL plays echoes through a module in all three routings. Then the Pi check (9.4) shows no added xruns. Tag `v0.1.0`. Peepo adds its overlay entry and pinned build.
+
+**Implementation status, 16 October 2026:** the core, its tests and an offline
+WAV renderer are implemented. The full suite passes on x86-64, with ASan/UBSan,
+and on arm64 under emulation. The return transport passes ThreadSanitizer.
+Ingen at 128 and 1024 frames, with one and four threads, passes exact echo
+timing/decay in every routing, BPM sync, a filter return path, feedback rejection
+and save/reload with empty audio buffers. See [the validation record](milestone-1-validation.md).
+The physical Pi xrun check, listening, release tag and Peepo integration remain
+release follow-up; Milestone 2's controls are still inert.
 
 ### Milestone 2 — memory features (spec milestone 2)
 
@@ -444,9 +468,9 @@ These are in Peepo's repository, not here. They are listed so the plugin doesn't
 
 | Item | Why it matters | When to settle |
 |---|---|---|
-| Default routing | The spec doesn't give Habit's default; the manual (p. 11) should | Milestone 1, before the first saved patch (defaults can change later; symbols can't) |
+| Default routing | The manual describes the routings but does not prescribe a default. Keep the published project default, In (0). | Settled for Milestone 1 |
 | Dry kill's three states | The spec lists TRUE and SERIES; whether "off" is a third position on the hardware or a separate switch needs checking against pp. 40 – 43 | Milestone 2 |
-| Peepo CV range | Sets how CV adds to knobs (section 3) | Milestone 1 |
+| Peepo CV range | AMS tempo LFO has unipolar and bipolar modes; Marbles emits 0-0.4, 0-1 or -1-1. Add normalized CV and clamp; existing CV utilities handle depth. | Checked in source for Milestone 1; see validation record |
 | Return with no outputs in Peepo | Might need a silent pass-through port | Milestone 0 |
 | Peepo bypass via the port | ALWAYS / COLLECT / TRAILS can't work through engine bypass. Settled in Peepo by `"bypass": "port"` (section 11); still to be checked with the real plugin | Milestone 2, in Ingen under WSL and on the Pi |
 | Memory at high sample rates | Two instances at 96 kHz are 460 MB | Note it in the README; Peepo runs at 48 kHz |

@@ -118,6 +118,12 @@ Checked on 16 October 2026 against the Chase Bliss Habit manual (Peepo's `refere
 
 ## Milestones
 
+**Implementation update, 16 October 2026:** Milestone 1's delay core is
+implemented and passes the desktop and emulated arm64 tests, plus jalv and
+Ingen host checks. [Validation and remaining release gates](milestone-1-validation.md)
+record the scope. The checkbox below stays open until physical Pi validation
+and the release follow-up are complete.
+
 - [x] Choose the license: MIT.
 - [ ] Milestone 1: the Discipline and Discipline Return pair, the shared memory, a separate echo loop, Size changes by crossfade, IN / OUT / FEED routing of the return, a Clear that can't cause xruns, and the `.ttl` files with CV inputs.
 - [ ] Milestone 2: Collect, Scan AUTO and MANUAL with Size-locked positions, Spread, Loop, Memory Dry and Wipe, and bypass behaviour (`lv2:enabled`, ALWAYS, TRAILS).
