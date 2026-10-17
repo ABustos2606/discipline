@@ -31,8 +31,10 @@ settings = (
     ("stepped-2x", 1, 6 / 7),
     ("smooth-reverse", 2, 0.25),
     ("smooth-stop", 2, 0.5),
-    ("trimmer-start-half", 3, 0.25),
-    ("dropper-pattern", 4, 0.6),
+    ("trimmer-keep-start-half", 3, 3 / 14),
+    ("trimmer-keep-end-quarter", 3, 12 / 14),
+    ("dropper-random", 4, 0.2),
+    ("dropper-pattern", 4, 0.8),
     ("dropper-grains", 4, 1),
 )
 notes = ["Synthetic plucked tones, not a guitar recording or a completed listening review.",

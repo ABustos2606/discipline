@@ -11,7 +11,7 @@ input and, in FEED, the processed repeats.
 
 Scan (Auto and Manual), Spread, Collect, Loop/Latch, Memory dry, Wipe, Dry kill,
 On/bypass, Always and Trails are active, including Scan/Spread CV. Size clock,
-Stepped Speed, Smooth Speed/reverse, Trimmer and patterned Dropper are active.
+Stepped Speed, Smooth Speed/reverse, Trimmer and Dropper are active.
 The original 39 ports retain their indices and symbols; Modifier, Modify and
 Modify CV append three main-plugin ports. Physical Pi and listening release gates remain
 pending; see [Milestone 3 validation](docs/milestone-3-validation.md).
@@ -65,8 +65,8 @@ Feed records the processed Return. Live dry and memory dry bypass modifiers.
 | --- | --- |
 | Stepped speed | Rates -4, -3, -2, -1.5, -1, -0.75, -0.5, 0, 0.5, 0.75, 1, 1.5, 2, 3, 4; evenly spaced knob positions |
 | Smooth speed | Continuous -2x to +2x; noon stops, 0.75 is ordinary +1x |
-| Trimmer | Left cuts the start, right cuts the end; noon is unchanged, either endpoint silences the echo |
-| Dropper | Zero is unchanged; a fixed 16-step pattern drops more audio as amount rises; the top 10% moves toward 5 ms grains |
+| Trimmer | Stepped. Noon is unchanged; left keeps the start of each echo, right keeps its end (3/4, 2/3, 1/2, 1/3, 1/4, 1/6, 1/8), and the kept slice repeats to fill the echo |
+| Dropper | Noon is unchanged; left drops at random (new drops every echo), right repeats a 16-step pattern every echo. Drops vary from shallow and smooth to deep and abrupt; the last 10% of each side moves toward 5 ms grains |
 
 Negative speed reverses a complete captured Size window, up to 30 s. Above a
 30 s Size, Speed captures and plays each half of the echo separately. Each Size boundary
@@ -104,7 +104,9 @@ Memory dry On deliberately monitors the full mix; Dry kill can remove live
 dry when that full memory playback is wanted by itself.
 
 Bypass fades the effect over 10 ms. Without Trails it also discards the echo
-after fading, including on a quick bypass/re-engage. Trails releases Loop back
+after fading, including on a quick bypass/re-engage. With Trails, turning the
+effect back on fades out and clears tails still ringing, unless Always or
+Collect is on. Trails releases Loop back
 to ordinary Repeats, so a held Loop cannot override tail decay. At maximum
 Repeats, ordinary unity feedback can still sustain a tail. Ordinarily bypass clears memory. Collect
 pauses the memory and its read heads; with Trails, it keeps moving and

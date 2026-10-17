@@ -135,6 +135,9 @@ void Discipline::run(uint32_t frames) noexcept
     const bool looping = enabled && (latch ? loop_latched_ : loop_high);
     if (enabled) { echo_silent_ = false; }
     if (!enabled && !trails && !echo_silent_) { echo_discard_ = true; }
+    // Turning the effect back on cuts Trails short, unless Always or Collect
+    // keep the memory; the discard fades the echo out before clearing it.
+    if (enabled && !was_enabled_ && trails && !always && !collect && !first_) { echo_discard_ = true; }
     was_enabled_ = enabled;
     const bool hold = control(MainPort::scan_hold, 0) >= 0.5f;
     const bool hold_pressed = hold && !hold_high_;

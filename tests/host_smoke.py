@@ -298,14 +298,14 @@ def main():
                 impulse_check(decay=0.5 if routing == 2 else 0.25)
                 print(f"PASS Ingen: routing {routing}, exact 50 ms echoes through -6 dB modules, {threads} threads", flush=True)
 
-            # Modify CV through Ingen: Trimmer noon passes echoes; CV -0.5
-            # reaches its silent endpoint, leaving exactly the live dry.
+            # Modify CV through Ingen: Smooth speed at +1x passes echoes; CV
+            # -0.25 reaches noon, which stops them, leaving exactly the dry.
             source["mode"] = "dc"
-            control("discipline", "modifier", 3)
-            control("discipline", "modify", 0.5)
-            wait_for(lambda: observed[0] > 0.2, "Trimmer noon passes echoes")
-            source["cv"] = -0.5
-            wait_for(lambda: observed[0] == 0.125, "Modify CV moves Trimmer to its silent endpoint")
+            control("discipline", "modifier", 2)
+            control("discipline", "modify", 0.75)
+            wait_for(lambda: observed[0] > 0.2, "Smooth speed at +1x passes echoes")
+            source["cv"] = -0.25
+            wait_for(lambda: observed[0] == 0.125, "Modify CV moves Smooth speed to stop")
             source["cv"] = 0.0
             wait_for(lambda: observed[0] > 0.2, "echoes return when Modify CV is released")
             control("discipline", "modifier", 0)

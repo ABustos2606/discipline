@@ -127,7 +127,8 @@ supersede the original implementation's full-distance glides and block-period
 memory-dry feedback. Scanning memory dry omits the present-time tap; explicit
 On monitors the full mix. Scan hold returns to the Manual target when released
 in Manual mode. Without Trails, bypass discards echoes after its fade; with
-Trails, Loop releases back to ordinary Repeats. The manual summary above is
+Trails, Loop releases back to ordinary Repeats, and turning the effect back on
+clears tails still ringing unless Always or Collect is on (manual p. 43). The manual summary above is
 reference material, not an instruction to restore the rejected feedback path.
 
 **Implementation update, 16 October 2026:** Milestones 1 and 2's delay core and
@@ -138,11 +139,13 @@ and the release follow-up are complete.
 
 **Milestone 3 implementation update, 17 October 2026:** the user selected the
 Size clock and all four proposed modifiers: Stepped Speed, Smooth Speed with
-reverse, Trimmer and patterned Dropper. They process Send, preserving the
+reverse, Trimmer and Dropper. They process Send, preserving the
 existing IN/OUT/FEED return routing. Speed captures complete Size windows and
 restarts with short crossfades; positive unity bypasses that reader. Noon
-stops both speed modes without held DC. Trimmer noon and Dropper zero are
-transparent. Modifier, Modify and Modify CV append ports 35 to 37; existing
+stops both speed modes without held DC. Following the manual's Modify dials
+(p. 16), Trimmer is stepped: noon is neutral, left keeps the start of each
+echo, right keeps its end, and the kept slice repeats to fill the echo.
+Dropper is neutral at noon, random on the left and patterned on the right. Modifier, Modify and Modify CV append ports 35 to 37; existing
 ports and URIs stay fixed. After review, the echo line stays at 60 s and Speed
 windows are capped at 30 s (two chunks per echo above a 30 s Size). Details, tests, listening material and remaining release
 gates are in [Milestone 3 validation](milestone-3-validation.md).
@@ -150,5 +153,5 @@ gates are in [Milestone 3 validation](milestone-3-validation.md).
 - [x] Choose the license: MIT.
 - [ ] Milestone 1: the Discipline and Discipline Return pair, the shared memory, a separate echo loop, Size changes by crossfade, IN / OUT / FEED routing of the return, a Clear that can't cause xruns, and the `.ttl` files with CV inputs.
 - [ ] Milestone 2: Collect, Scan AUTO and MANUAL with Size-locked positions, Spread, Loop, Memory Dry and Wipe, and bypass behaviour (`lv2:enabled`, ALWAYS, TRAILS).
-- [ ] Milestone 3 release: Size clock, Stepped and Smooth Speed/reverse, Trimmer and patterned Dropper implemented; physical Pi/listening validation pending.
+- [ ] Milestone 3 release: Size clock, Stepped and Smooth Speed/reverse, Trimmer and Dropper implemented; physical Pi/listening validation pending.
 - [ ] Lay out the control ports to fit Peepo's catalogue overlay format.

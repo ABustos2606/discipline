@@ -316,7 +316,9 @@ Without Trails, bypass fades wet to zero and logically invalidates the echo
 before fading it back in, even if the effect is re-enabled during that fade.
 Old Return samples are excluded at that boundary. With Trails, held or latched
 Loop releases over 50 ms to ordinary Repeats; maximum Repeats can still sustain
-unity feedback, as it can during normal use.
+unity feedback, as it can during normal use. Turning the effect back on while
+Trails ring fades them out over 10 ms and clears the echo, unless Always or
+Collect is on (manual p. 43).
 
 ### 6.11 Tempo and the Size clock
 
@@ -351,19 +353,29 @@ unity feedback, as it can during normal use.
   old. To fit the 60 s echo line, Speed windows are capped at 30 s: above a
   30 s Size each echo is split into two halves, each captured and played on
   its own. Non-unity speeds then play the newest half, so forward playback
-  starts about Size/2 behind instead of Size. Trimmer and Dropper keep the
-  full Size.
+  starts about Size/2 behind instead of Size. Trimmer uses the same windows;
+  Dropper follows the full Size.
 - Hermite interpolation handles rates up to unity; faster playback uses a
   32-tap windowed-sinc antialias filter, with precomputed cutoff/fractional-phase
   tables. No coefficient generation occurs in `run()`. Positive unity crossfades
   to the ordinary tap and becomes bit-exact. At stop a 5 ms gain ramp removes
   held DC. Snapshot restarts deliberately change transient placement and startup
   audio; they are a rhythmic effect rather than a latency-neutral pitch shifter.
-- Trimmer's left half cuts the start, its right half cuts the end. Noon is
-  bit-exact neutral and both endpoints silence the echo. Its shaped edges and
-  gain ramp span 1 ms. Dropper uses a repeatable 16-step hash pattern, increasing
-  dropout density with amount. The top 10% crossfades to a roughly 5 ms grain
-  grid. Zero is bit-exact neutral; maximum still contains sound and gaps.
+- Trimmer is stepped, following the manual's A3 dial: 15 positions, noon
+  bit-exact neutral. Left keeps the start of each echo, right keeps its end:
+  3/4, 2/3, 1/2, 1/3, 1/4, 1/6 and 1/8 from noon outwards. The kept slice
+  repeats to fill the echo, so short slices sound like subdivisions of Size.
+  It reads the echo line at a whole-frame delay; each jump to the slice start
+  crossfades over 1 ms. Keeping the end reads ahead of the ordinary tap within
+  the same echo, or the previous echo's end when the slice is shorter than the
+  host period. Delays stay below two windows.
+- Dropper follows the B3 dial: noon is bit-exact neutral. Right of noon a
+  16-step hash pattern repeats every echo; left of noon the draw changes every
+  echo. Density rises towards both ends. Each drop has its own depth (shallow
+  to full) and edge (0.5 to 20 ms), so some are smooth and subtle and others
+  abrupt and deep; adjacent drops join without a blip. The last 10% of each
+  side crossfades to a roughly 5 ms grain grid; maximum still contains sound
+  and gaps.
 - Rhythm gates and captured windows use the clock phase advanced by the host
   period, compensating for Return transport. Echo discard/fault invalidates
   captured readers in constant time; Clear remains memory-only.
@@ -430,7 +442,8 @@ Measure worst-case `run()` and whole-patch xruns on the physical Pi (section 9).
 | `rt_timing` | 10 simulated minutes with random control changes: report the worst and the 99.9th-percentile `run()` time per period |
 | `m3_clock` | Size clock pulses: exact period and 1 ms width, committed Size, BPM, CV, lifecycle |
 | `m3_speed` | measured pitch, stop without DC, full-window reverse up to 30 s, 30 s chunks above |
-| `m3_alias/neutral`, `m3_rhythm` | antialiasing; bit-exact neutral settings; Trimmer halves; repeating Dropper |
+| `m3_alias/neutral`, `m3_rhythm` | antialiasing; bit-exact neutral settings; every Trimmer step replays the right slice; Dropper pattern repeats, random changes, shallow drops |
+| `m3_trails` | re-enabling clears Trails unless Always or Collect |
 | `m3_transitions`, `m3_routing/discard` | bounded mode changes, slice independence, IN/OUT/FEED, bypass discard |
 | `m3_modify_cv` | Modify CV adds and clamps, reaches exact neutral and Stepped settings, per sample |
 

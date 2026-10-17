@@ -142,37 +142,61 @@ void antialias_and_neutral(const Library& lib) {
         return n.render(12000, [](uint64_t f) { const auto x = static_cast<float>(static_cast<int>((f * 16807) % 1000) - 500) * 0.00025f; return Frame{x, -x}; });
     };
     const auto plain = neutral(0, 0.5f);
-    for (const auto& setting : {std::pair{2, 0.75f}, {3, 0.5f}, {4, 0.0f}}) {
+    for (const auto& setting : {std::pair{2, 0.75f}, {3, 0.5f}, {4, 0.5f}}) {
         const auto tested = neutral(setting.first, setting.second);
         require(std::memcmp(plain.data(), tested.data(), plain.size() * sizeof(Frame)) == 0, "neutral modifier preserves delay and feedback bit-exactly");
     }
     std::cout << "PASS m3_alias/neutral: antialias filtering and bit-exact unity/neutral settings\n";
 }
 void rhythm(const Library& lib) {
-    for (float amount : {0.0f, 0.25f, 0.5f, 0.75f, 1.0f}) {
-        Host h(lib); h.main->control(MainPort::size) = 100; wet_only(h, 3, amount);
-        h.render(19200, dc); const auto start = h.frame; const auto audio = h.render(9600, dc);
+    // Trimmer keeps a slice of each echo and repeats it. A coded ramp names
+    // every input frame, so each output sample shows which frame it replays.
+    const auto ramp = [](uint64_t f) { return Frame{static_cast<float>(f) * 1e-6f, 0}; };
+    for (int step = -7; step <= 7; ++step) {
+        Host h(lib); h.main->control(MainPort::size) = 100; wet_only(h, 3, (step + 7) / 14.0f);
+        h.render(19200, ramp); const auto start = h.frame; const auto audio = h.render(9600, ramp);
+        const auto slice = static_cast<uint64_t>(std::llround(4800 * dsp::Modifiers::trim_keep(step)));
         for (size_t i = 0; i < audio.size(); ++i) {
-            const auto phase = (start + i) % 4800;
-            if (phase != 1200 && phase != 3600) { continue; }
-            const bool kept = amount == 0.5f || (amount == 0.25f && phase == 3600) || (amount == 0.75f && phase == 1200);
-            near(audio[i].l, kept ? 0.125f : 0, 1e-7f, "Trimmer cuts the correct Size-synchronized half");
+            const uint64_t t = start + i, phase = t % 4800, within = phase % slice;
+            if (step != 0 && within < 48) { continue; } // 1 ms crossfade after each jump
+            const uint64_t echo = t - phase;
+            const uint64_t source = step == 0 ? t - 4800 : step < 0 ? echo - 4800 + within : echo - slice + within;
+            near(audio[i].l, ramp(source).l, 1e-7f, "Trimmer step " + std::to_string(step) + " repeats the kept slice");
         }
     }
-    for (float amount : {0.5f, 1.0f}) {
+    // Above 30 s, Trimmer slices each half of the echo, inside the 60 s line.
+    for (int step : {-7, 7}) {
+        Host h(lib, 1000, 16); h.main->control(MainPort::size) = 60000; wet_only(h, 3, (step + 7) / 14.0f);
+        h.render(180000, ramp); const auto start = h.frame; const auto audio = h.render(60000, ramp);
+        for (size_t i : {5000U, 20000U, 35000U, 50000U}) {
+            const uint64_t t = start + i, phase = t % 30000, within = phase % 3750, half = t - phase;
+            const uint64_t source = step < 0 ? half - 30000 + within : half - 3750 + within;
+            near(audio[i].l, ramp(source).l, 1e-7f, "60 s Trimmer repeats slices of each 30 s half");
+        }
+    }
+    require(dsp::Modifiers::trim_step(0) == -7 && dsp::Modifiers::trim_step(0.5f) == 0 && dsp::Modifiers::trim_step(1) == 7,
+            "Trimmer: left keeps the start, noon is neutral, right keeps the end");
+    // Dropper: right of noon repeats a pattern every echo; left drops at random.
+    for (float amount : {0.75f, 1.0f, 0.25f, 0.0f}) {
+        const bool pattern = amount > 0.5f;
         Host h(lib); h.main->control(MainPort::size) = 1000; wet_only(h, 4, amount);
         h.render(144000, dc); const auto audio = h.render(96000, dc);
-        unsigned on = 0, off = 0, edges = 0;
+        unsigned on = 0, off = 0, edges = 0, partial = 0;
+        bool repeats = true;
         for (size_t i = 0; i < 48000; ++i) {
-            require(std::memcmp(&audio[i], &audio[i + 48000], sizeof(Frame)) == 0, "Dropper pattern repeats at the same place in every echo");
+            repeats = repeats && std::memcmp(&audio[i], &audio[i + 48000], sizeof(Frame)) == 0;
             require(audio[i].l >= 0 && audio[i].l <= 0.125001f, "Dropper never boosts signal");
             on += audio[i].l > 0.1f; off += audio[i].l < 0.01f;
             if (i && audio[i - 1].l <= 0.0625f && audio[i].l > 0.0625f) { ++edges; }
+            if (i && audio[i].l == audio[i - 1].l && audio[i].l > 0.002f && audio[i].l < 0.12f) { ++partial; }
         }
+        require(repeats == pattern, pattern ? "Dropper pattern repeats at the same place in every echo"
+                                            : "random Dropper changes from echo to echo");
         require(on > 1000 && off > 1000, "Dropper contains both sound and gaps");
-        if (amount == 1) { require(edges > 16, "maximum Dropper produces short grains rather than muting everything"); }
+        if (amount == 0.75f || amount == 0.25f) { require(partial > 1000, "some drops are shallow rather than silent"); }
+        if (amount == 1 || amount == 0) { require(edges > 16, "maximum Dropper produces short grains rather than muting everything"); }
     }
-    std::cout << "PASS m3_rhythm: Trimmer start/end cuts, neutral, bounded repeating Dropper and granular maximum\n";
+    std::cout << "PASS m3_rhythm: stepped Trimmer slices repeat (start left, end right), noon-neutral Dropper with random/pattern sides\n";
 }
 void transitions_and_slices(const Library& lib) {
     const auto render = [&](bool sliced) {
@@ -206,9 +230,9 @@ void routing_and_discard(const Library& lib) {
         h.main->control(MainPort::routing) = static_cast<float>(routing);
         const auto phrase = [](uint64_t f) { return f < 100 ? Frame{0.01f, -0.005f} : Frame{}; };
         h.render(512, phrase);
-        h.main->control(MainPort::modifier) = 3; h.main->control(MainPort::modify) = 0;
+        h.main->control(MainPort::modifier) = 2; h.main->control(MainPort::modify) = 0.5f;
         const auto muted = h.render(1024, phrase);
-        near(muted.back().l, 0, 1e-8f, "Trimmer mutes direct echoes in every routing");
+        near(muted.back().l, 0, 1e-8f, "stopped Speed mutes direct echoes in every routing");
         h.main->control(MainPort::modifier) = 0;
         const auto restored = h.render(512, phrase);
         float peak = 0;
@@ -259,10 +283,32 @@ void modify_cv(const Library& lib) {
     }
     std::cout << "PASS m3_modify_cv: knob plus CV, clamping, exact neutral/stepped settings, per-sample and slice independent\n";
 }
+void trails_reenable(const Library& lib) {
+    // Trails ring while bypassed. Turning the effect back on clears them,
+    // unless Always or Collect is on.
+    for (int keep : {0, 1, 2}) {
+        Host h(lib); wet_only(h, 0, 0.5f); h.main->control(MainPort::size) = 100;
+        h.main->control(MainPort::repeats) = 1; h.main->control(MainPort::trails) = 1;
+        h.main->control(MainPort::always) = keep == 1; h.main->control(MainPort::collect) = keep == 2;
+        h.render(9600, dc); h.render(2400, silence);
+        h.main->control(MainPort::enabled) = 0;
+        const auto bypassed = h.render(4800, silence);
+        float ringing = 0;
+        for (auto f : bypassed) { ringing = std::max(ringing, std::fabs(f.l)); }
+        require(ringing > 0.01f, "Trails ring while bypassed");
+        h.main->control(MainPort::enabled) = 1;
+        const auto after = h.render(9600, silence);
+        float peak = 0;
+        for (size_t i = 2400; i < after.size(); ++i) { peak = std::max(peak, std::fabs(after[i].l)); }
+        if (keep == 0) { near(peak, 0, 0, "re-enabling clears Trails"); }
+        else { require(peak > 0.01f, keep == 1 ? "Always keeps Trails on re-enable" : "Collect keeps Trails on re-enable"); }
+    }
+    std::cout << "PASS m3_trails: re-enable clears Trails unless Always or Collect\n";
+}
 } // namespace
 int main(int argc, char** argv) {
     try {
         require(argc == 2, "usage: test_m3 discipline.so"); Library lib(argv[1]);
-        clocks(lib); speed(lib); antialias_and_neutral(lib); rhythm(lib); transitions_and_slices(lib); routing_and_discard(lib); modify_cv(lib);
+        clocks(lib); speed(lib); antialias_and_neutral(lib); rhythm(lib); transitions_and_slices(lib); routing_and_discard(lib); modify_cv(lib); trails_reenable(lib);
     } catch (const std::exception& e) { std::cerr << "FAIL Milestone 3: " << e.what() << '\n'; return 1; }
 }

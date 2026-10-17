@@ -31,8 +31,8 @@ remain in place. Filter and stability effects can still be patched externally.
 | Off (0) | Ordinary echo |
 | Stepped speed (1) | 15 evenly spaced settings: -4, -3, -2, -1.5, -1, -0.75, -0.5, 0, 0.5, 0.75, 1, 1.5, 2, 3, 4 |
 | Smooth speed (2) | -2x to +2x; noon stops, 0.75 is +1x with a small unity detent |
-| Trimmer (3) | Left cuts the start, right cuts the end; noon unchanged, endpoints silent |
-| Dropper (4) | Zero unchanged, increasing dropout density in a fixed 16-step pattern; top 10% moves toward roughly 5 ms grains |
+| Trimmer (3) | Stepped; noon unchanged; left keeps the start, right keeps the end (3/4 to 1/8), the kept slice repeats to fill the echo |
+| Dropper (4) | Noon unchanged; left random (new every echo), right a fixed 16-step pattern; drops vary in depth and edge; last 10% of each side moves toward roughly 5 ms grains |
 
 Speed references complete captured Size windows, restarting each Size with a
 1 ms complementary raised-cosine fade. Reverse starts at the last sample of
@@ -41,7 +41,8 @@ part before the next restart. This deliberately changes transient placement
 and startup audio. It is a rhythmic effect, with ordinary delay timing at
 positive unity. Both speed modes fade to silence at stop rather than holding
 DC. Mode/rate changes use 10 ms smoothers, with a 5 ms stop gain ramp. Trimmer
-and Dropper have shaped edges and 1 ms gain ramps.
+crossfades each slice jump over 1 ms; Dropper edges run from 0.5 to 20 ms,
+followed by a 1 ms gain ramp.
 
 When a fast wrap fade overlaps the next Size restart, the new fade starts
 from the last mixed output sample. This keeps the seam continuous with at
@@ -53,13 +54,13 @@ wait a full new Size while continuing to play the old, shorter window.
 Rates up to unity use Hermite interpolation; faster playback uses a 32-tap
 windowed-sinc antialias filter with precomputed cutoff and fractional-phase
 tables. Positive unity bypasses that reader exactly after its transition.
-Trimmer noon and Dropper zero are also bit-exact neutral settings.
+Trimmer noon and Dropper noon are also bit-exact neutral settings.
 
 A captured window is read while the next one records, so it can be two
 windows old. The echo line stays at 60 s and Speed windows are capped at
 30 s: above a 30 s Size, each half of the echo is captured and played
 separately, so non-unity forward playback starts about Size/2 behind.
-Trimmer and Dropper still follow the full Size. Windows are never copied in
+Trimmer uses the same windows; Dropper follows the full Size. Windows are never copied in
 `run()`. Memory and echo buffers total about 92 MB at 48 kHz or 184 MB at
 96 kHz per instance,
 plus about 0.22 MB of filter coefficients and small fade tables. Allocation,
@@ -75,8 +76,9 @@ echo discard and fault handling reset counters/references in constant time.
 | Clock | Exact pulse positions/width at 44.1, 48 and 96 kHz with 64/128/256-frame periods; committed Size changes; BPM/beats and maximum Size CV; bypass/Loop/Clear/Pair continuity and activation reset |
 | Speed | Measured pitch within 0.5%, forward/reverse/stopped playback, coherent stereo, complete reverse windows up to 30 s, 30 s chunks at a 60 s Size at +/-4x, Size commits inside Send's transport lead |
 | Aliasing | At 2x, a 19 kHz input's folded component is at least 20 dB below the wanted shifted 1 kHz component |
-| Neutral settings | Bit-identical full audio/feedback versus Off at +1x, Trimmer noon and Dropper zero |
-| Rhythm | Trimmer cuts the selected half; Dropper repeats sample-for-sample on successive Sizes, never boosts, and produces audible grains at maximum |
+| Neutral settings | Bit-identical full audio/feedback versus Off at +1x, Trimmer noon and Dropper noon |
+| Rhythm | With a coded ramp, all 15 Trimmer steps replay exactly the expected frames (start on the left, end on the right), also with 30 s halves at a 60 s Size; Dropper's pattern side repeats sample-for-sample on successive Sizes, its random side changes, both have shallow drops, never boost, and produce grains at maximum |
+| Trails | Re-enabling while Trails ring clears them; with Always or Collect they keep ringing |
 | Transitions | Bounded constant-input sample steps through mode/amount changes; a coded ramp catches overlapping 4x wrap/Size fades; bit-identical output with independently randomized host slices |
 | Modify CV | Knob plus CV and clamping are bit-identical to the equivalent knob setting (Smooth unity, Trimmer noon, Stepped 2x, endpoints); a per-sample LFO is bit-identical under random host slicing in all four modes |
 | Routing/discard | Muting IN/FEED destroys recirculating content, whereas OUT preserves its internal repeats; a short bypass discards captured reverse windows along with the echo |
@@ -84,8 +86,8 @@ echo discard and fault handling reset counters/references in constant time.
 The native full `make -j4 test` suite passes, including prior milestone/audit
 tests. The sanitizer build (`make -j4 test SAN=1`) passes with AddressSanitizer
 and UBSan. The WAV renderer retains its format/timing tests and now verifies the
-new optional Modifier/Modify arguments with a silent Trimmer endpoint and
-unchanged live dry. Ten simulated minutes of random controls now include all
+new optional Modifier/Modify arguments with stopped Smooth speed (silent echo)
+and unchanged live dry. Ten simulated minutes of random controls now include all
 modifier modes and amounts alongside Size, memory and bypass controls.
 
 The final native x86-64 stress run, alongside sanitizer/arm64 rebuilds,
@@ -133,10 +135,18 @@ invented. The sole defined dynamic export remains `lv2_descriptor`.
 After review, the echo line went back to 60 s (from 120 s) with Speed windows
 capped at 30 s, and Modify CV was appended. The full suite, the sanitizer
 build and the Ingen checks (1 and 4 threads, clock divider) pass. Ingen also
-checks Modify CV: with Trimmer at noon, a CV of -0.5 from a patch CV input
-reaches the silent endpoint and leaves exactly the live dry. Deliberately
+checks Modify CV: with Smooth speed at +1x, a CV of -0.25 from a patch CV
+input reaches noon, which stops the echo and leaves exactly the live dry. Deliberately
 removing the window cap, ignoring the CV, or reading it once per run each
 make `test_m3` fail. The arm64 build and lv2lint were not rerun.
+
+A second pass followed the manual's Modify dials and Trails note (pp. 16, 43).
+Trimmer was reversed (the manual has cut end on the left) and only gated;
+it is now stepped and repeats the kept slice. Dropper is now neutral at noon
+with random drops on the left, as on the B3 dial; its pattern side keeps the
+earlier behaviour with varied drop shapes. Re-enabling now clears ringing
+Trails unless Always or Collect is on. Swapping Trimmer's sides, removing
+its repeat, or removing the Trails fix each make `test_m3` fail.
 
 ## Listening material and notes
 
@@ -157,8 +167,8 @@ arbitrary guitar WAV files; see README for its arguments.
 | --- | --- |
 | Stepped Speed | `stepped-2x.wav`: confirm an octave up, recognizable attacks, repeat restart/wrap seams; sweep stepped settings on guitar and listen near stop |
 | Smooth Speed/reverse | `smooth-reverse.wav` and `smooth-stop.wav`: confirm a full reversed Size phrase and dry-only stop; sweep through reverse/zero/+1x for clicks, level dips and filter coloration |
-| Trimmer | `trimmer-start-half.wav`: hear the later half of each echo; audition the opposite half, noon and both silent endpoints, including an input attack at the gate edge |
-| Dropper | `dropper-pattern.wav` versus `dropper-grains.wav`: confirm the same holes recur each Size and maximum makes short grains; judge edge clicks and usable density on sustained guitar |
+| Trimmer | `trimmer-keep-start-half.wav` and `trimmer-keep-end-quarter.wav`: hear the start half repeated twice and the last quarter repeated four times per echo; sweep all steps for seams at the 1 ms slice crossfades |
+| Dropper | `dropper-random.wav`, `dropper-pattern.wav` and `dropper-grains.wav`: random holes change each echo, pattern holes recur, maximum makes grains; judge drop shapes and usable density on sustained guitar |
 
 Also change Size/tempo while each modifier is active, compare IN's successive
 processing with OUT's unchanged stored repeats, and listen with Loop, deep
