@@ -1,7 +1,7 @@
 # Discipline
 
 An LV2 stereo delay with a 3-minute memory, written for Peepo and other LV2
-hosts. MIT licensed, Copyright (c) 2026 Alejandro Bustos.
+hosts. GPL-2.0-or-later, Copyright (c) 2026 Alejandro Bustos; see [LICENSE](LICENSE).
 
 Milestones 1-3 implement the stereo delay core, memory controls and timed modifiers: 50 ms to 60 s echoes, Repeats,
 Level, Size in milliseconds or beats at BPM, IN / OUT / FEED routing, Clear,
@@ -60,7 +60,7 @@ read. It stays, hidden, so patches saved with it still load.
 | Memory dry | Off, Scanning (history only, default), or On (full memory mix, including present) |
 | Wipe: no echo | Mutes the echo, so only the memory is heard, and forces Memory dry On |
 | Dry kill | Off; Always (including bypass); Effect on (passes dry while bypassed) |
-| On / Always / Trails | Bypass through On; Always records while bypassed; Trails lets echoes decay |
+| On / Always / Trails | Bypass through On; Always records while bypassed; Trails (on by default) lets echoes decay |
 | Size clock | CV output: 1.0 for 1 ms at each Size boundary, otherwise zero |
 | Modifier / Modify | Off, Stepped speed, Smooth speed, Trimmer, Dropper or Outside; Modify sets the amount |
 | Modify CV | CV input added to Modify per sample, then limited to 0 - 1 |
@@ -150,7 +150,7 @@ to try it without installing. Both descriptors are in the same binary:
 | Discipline | `https://github.com/ABustos2606/discipline#discipline` | 38 |
 | Discipline Return | `https://github.com/ABustos2606/discipline#return` | 4 |
 
-Discipline's LV2 version is 0.4.0; Return's is 0.2.0. Discipline requires
+Discipline's LV2 version is 0.4.1; Return's is 0.2.0. Discipline requires
 `urid:map`; Return declares it optional and requires no host features. Neither has a
 custom UI. Both offer `lv2:hardRTCapable`. Block length comes from optional
 LV2 options: nominal, then maximum, then a 128-frame fallback. Correct echo

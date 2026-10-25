@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-2.0-or-later
 # Copyright (c) 2026 Alejandro Bustos
 """Generate reproducible synthetic listening material through the actual LV2."""
 from pathlib import Path

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-2.0-or-later
 # Copyright (c) 2026 Alejandro Bustos
 @prefix lv2: <http://lv2plug.in/ns/lv2core#> .
 @prefix doap: <http://usefulinc.com/ns/doap#> .
@@ -14,12 +14,12 @@
 <https://github.com/ABustos2606/discipline#discipline>
     a lv2:Plugin, lv2:DelayPlugin ;
     doap:name "Discipline" ;
-    doap:license <https://spdx.org/licenses/MIT> ;
+    doap:license <https://spdx.org/licenses/GPL-2.0-or-later> ;
     doap:maintainer [ foaf:name "Alejandro Bustos" ; foaf:homepage <https://github.com/ABustos2606> ] ;
     doap:homepage <https://github.com/ABustos2606/discipline> ;
     rdfs:comment "Delay with a 3-minute memory. Works on its own: Size sets echo time, Repeats the feedback, Modifier changes every repeat. Modifier Outside sends the repeats out of Send, through your modules, into a Discipline Return." ;
     lv2:minorVersion 4 ;
-    lv2:microVersion 0 ;
+    lv2:microVersion 1 ;
     lv2:optionalFeature lv2:hardRTCapable, options:options ;
     options:supportedOption bufsz:nominalBlockLength, bufsz:maxBlockLength ;
     lv2:requiredFeature urid:map ;
@@ -259,7 +259,7 @@
         lv2:name "Trails" ;
         lv2:minimum 0 ;
         lv2:maximum 1 ;
-        lv2:default 0 ;
+        lv2:default 1 ;
         lv2:portProperty lv2:toggled
     ],
     [

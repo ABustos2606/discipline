@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-2.0-or-later
 # Copyright (c) 2026 Alejandro Bustos
 """Check the offline renderer with independently encoded WAV impulses."""
 from pathlib import Path

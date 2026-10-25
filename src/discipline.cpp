@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: MIT
+// SPDX-License-Identifier: GPL-2.0-or-later
 // Copyright (c) 2026 Alejandro Bustos
 #include "discipline.hpp"
 #include <cmath>
@@ -128,7 +128,7 @@ void Discipline::run(uint32_t frames) noexcept
     const bool enabled = control(MainPort::enabled, 1) >= 0.5f;
     const bool collect = control(MainPort::collect, 0) >= 0.5f;
     const bool always = control(MainPort::always, 0) >= 0.5f;
-    const bool trails = control(MainPort::trails, 0) >= 0.5f;
+    const bool trails = control(MainPort::trails, 1) >= 0.5f;
     const bool wipe = control(MainPort::wipe, 0) >= 0.5f;
     const int dry_kill = static_cast<int>(control(MainPort::dry_kill, 0, 0, 2) + 0.5f);
     const int memory_dry = static_cast<int>(control(MainPort::memory_dry, 1, 0, 2) + 0.5f);

@@ -11,7 +11,7 @@ Discipline has its own repository, outside Peepo:
 - Every other plugin Peepo runs is built from another repository at a pinned commit. Discipline is built the same way.
 - It is a normal LV2 bundle, so it can be tested on a desktop without Ingen or the Pi.
 - It has its own build (Makefile, and DPF if used), apart from Peepo's CMake and LVGL build.
-- Its license is MIT (chosen 16 October 2026), separate from Peepo's GPLv3. Peepo can still build and ship it, since MIT is compatible with the GPL.
+- Its license is GPL-2.0-or-later (MIT chosen 16 October 2026, changed to GPL-2.0-or-later on 20 October 2026), the same as Loo-pi. Peepo (GPL-3.0-or-later) can build and ship it, because "or later" lets it be used under GPLv3.
 - Sound tuning will take months. Tagged releases let Peepo update to a new version on purpose.
 
 What stays in Peepo:
@@ -123,7 +123,7 @@ Checked on 16 October 2026 against the Chase Bliss Habit manual (Peepo's `refere
 - **LATCH:** Loop latches.
 - **WIPE:** mutes the echo, so only the memory is heard. Forces Memory Dry on.
 - **MEMORY DRY:** OFF, SCANNING (default: heard only while Scan or Spread move) or ON.
-- **TRAILS:** echoes fade out after bypass. With Collect on, the memory keeps moving while bypassed instead of pausing.
+- **TRAILS:** echoes fade out after bypass (on by default since 0.4.1). With Collect on, the memory keeps moving while bypassed instead of pausing.
 
 **Bypass (pp. 20, 33).** Bypassing empties the memory unless COLLECT or ALWAYS is on. With COLLECT, the memory pauses and keeps its audio. Discipline needs an `lv2:enabled` port to know when it is bypassed.
 
@@ -163,7 +163,7 @@ ports and URIs stay fixed. After review, the echo line stays at 60 s and Speed
 windows are capped at 30 s (two chunks per echo above a 30 s Size). Details, tests, listening material and remaining release
 gates are in [Milestone 3 validation](milestone-3-validation.md).
 
-- [x] Choose the license: MIT.
+- [x] Choose the license: GPL-2.0-or-later (was MIT until 20 October 2026).
 - [ ] Milestone 1: the Discipline and Discipline Return pair, the shared memory, a separate echo loop, Size changes by crossfade, IN / OUT / FEED routing of the return, a Clear that can't cause xruns, and the `.ttl` files with CV inputs.
 - [ ] Milestone 2: Collect, Scan AUTO and MANUAL with Size-locked positions, Spread, Loop, Memory Dry and Wipe, and bypass behaviour (`lv2:enabled`, ALWAYS, TRAILS).
 **Pi feedback update, 17 October 2026.** The first Pi test found Discipline
@@ -190,6 +190,12 @@ unusable: the echo existed only through the Return, so an unpaired Return
   covers the last quarter of each side, with 15 ms soft-edged grains, half
   kept (was 5 ms over the last tenth).
 - Wipe is named "Wipe: no echo" and has its own last page in Peepo.
+
+**Trails on by default, 25 October 2026 (0.4.1).** Peepo's scenes switch
+modules off while playing, and every delay there lets its echoes ring on, so
+Trails now defaults to 1. Patches saved before keep the value stored in them
+(Ingen saves every control's value), so their sound does not change. No port,
+symbol or URI changed.
 
 - [ ] Milestone 3 release: Size clock, Stepped and Smooth Speed/reverse, Trimmer and Dropper implemented; physical Pi/listening validation pending.
 - [ ] Lay out the control ports to fit Peepo's catalogue overlay format.

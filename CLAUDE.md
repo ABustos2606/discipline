@@ -31,7 +31,7 @@ Peepo is a guitar pedal built on a Raspberry Pi 5 (2 GB, Debian 12 arm64) runnin
 - Plugin URI: `https://github.com/ABustos2606/discipline#...`. Never use Peepo's namespace. Don't change a URI or port symbol once a patch has been saved with it.
 - Never use "Habit" or "Chase Bliss" in plugin names, port names, descriptions or code identifiers. Describe it as a delay with a memory.
 - Port names and descriptions appear on Peepo's small screen: short, plain ASCII (its font draws other characters as boxes), and they say what the control does, never who made it.
-- License: MIT, `Copyright (c) 2026 Alejandro Bustos`. Every source file, header, Makefile and `.ttl` file starts with `SPDX-License-Identifier: MIT`; both plugins declare `doap:license <https://spdx.org/licenses/MIT>`.
+- License: **GPL-2.0-or-later** (changed from MIT on 20 October 2026), `Copyright (c) 2026 Alejandro Bustos`; the text is in `LICENSE`. Every source file, header, Makefile and `.ttl` file starts with `SPDX-License-Identifier: GPL-2.0-or-later`; both plugins declare `doap:license <https://spdx.org/licenses/GPL-2.0-or-later>`.
 - Line endings are LF. Files go to Linux and the Pi.
 - Use Peepo's name, never "Pedal PI", in new text.
 

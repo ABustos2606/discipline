@@ -48,7 +48,7 @@ third discipline https://github.com/ABustos2606/discipline.git <commit> "make" \
 - `make install` writes `$LV2DIR/discipline.lv2/` (`discipline.so`, three
   `.ttl` files, `LICENSE`). `make test` runs the offline suite if wanted
   (needs `python3-rdflib` for the Turtle check).
-- License MIT; it can ship in Peepo's GPLv3 package.
+- License GPL-2.0-or-later; it can ship in Peepo's GPLv3 package.
 
 ## 2. Overlay entry
 

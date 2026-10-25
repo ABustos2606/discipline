@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-2.0-or-later
 # Copyright (c) 2026 Alejandro Bustos
 """Check parsed Turtle against the C++ port ABI. Test dependency: rdflib."""
 import pathlib
@@ -50,7 +50,7 @@ def check(bundle):
         require(re.search(r"count\s*=\s*" + str(count) + r"\b", body[1]), f"{enum}: count sentinel")
         graph = rdflib.Graph().parse(bundle / filename, format="turtle")
         require((plugin, RDF.type, LV2.Plugin) in graph and (plugin, RDF.type, cls) in graph, f"{fragment}: class")
-        require(graph.value(plugin, DOAP.license) == URIRef("https://spdx.org/licenses/MIT"), f"{fragment}: license")
+        require(graph.value(plugin, DOAP.license) == URIRef("https://spdx.org/licenses/GPL-2.0-or-later"), f"{fragment}: license")
         require(set(graph.objects(plugin, LV2.requiredFeature)) == ({MAP} if fragment == "discipline" else set()), f"{fragment}: required features")
         require({LV2.hardRTCapable, OPTIONS} <= set(graph.objects(plugin, LV2.optionalFeature)), f"{fragment}: optional features")
         if fragment == "return":

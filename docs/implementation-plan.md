@@ -16,7 +16,7 @@ Four facts from Ingen's source shape the design. The spec doesn't mention them.
 ## 2. Technology and build
 
 - **Plain LV2 C API in C++17, no DPF.** Both plugins must live in **one shared object**, so that they can share a pair registry through static storage. DPF builds one binary per plugin, so sharing would need a third library. The raw API is about 100 lines of glue for two descriptors.
-- **License:** MIT. **Dependencies:** `lv2-dev` headers only (ISC license), which MIT allows. No Boost, no libsndfile in the plugin. The test tools may use a small WAV writer of their own.
+- **License:** GPL-2.0-or-later. **Dependencies:** `lv2-dev` headers only (ISC license), which the GPL allows. No Boost, no libsndfile in the plugin. The test tools may use a small WAV writer of their own.
 - **One binary, `discipline.so`**, in `discipline.lv2/` beside `manifest.ttl`, `discipline.ttl` and `discipline_return.ttl`.
 - **Makefile**, no configure step, no network:
     - `make` builds `build/discipline.lv2/`;
@@ -31,7 +31,7 @@ Four facts from Ingen's source shape the design. The spec doesn't mention them.
 
 ```
 Makefile
-LICENSE                      MIT text (milestone 0)
+LICENSE                      GPL-2.0 text (MIT until 20 October 2026)
 README.md                    what it is, build, install, the pair in one picture
 discipline.lv2/
     manifest.ttl             both plugins, one binary
@@ -101,7 +101,7 @@ Names are short plain ASCII. They say what the control does.
 | 22 | `wipe` | Wipe | toggle | 0/1 | 0 | echo muted, Memory dry forced On |
 | 23 | `dry_kill` | Dry kill | enum | 0 Off, 1 Always, 2 Effect on | 0 | 1 = TRUE, 2 = SERIES in the manual |
 | 24 | `always` | Always rec | toggle | 0/1 | 0 | memory records while bypassed |
-| 25 | `trails` | Trails | toggle | 0/1 | 0 | |
+| 25 | `trails` | Trails | toggle | 0/1 | 1 | 0 until 0.4.1; saved patches keep their value |
 | 26 | `pair` | Pair | integer | 1 – 16 | 1 | must match the Return's |
 | 27 | `enabled` | On | toggle, `lv2:designation lv2:enabled` | 0/1 | 1 | bypass; hidden in Peepo |
 | 28 | `level_cv` | Level CV | CV in | | | added to Level |
@@ -483,7 +483,7 @@ Each has an end check. "Done" means the offline tests pass on x86-64 and arm64, 
 
 ### Milestone 0 — scaffolding
 
-- License: MIT (chosen 16 October 2026). Add `LICENSE` with the standard MIT text and the line `Copyright (c) 2026 Alejandro Bustos`. Put `SPDX-License-Identifier: MIT` at the top of every source file, header, Makefile and `.ttl` file, and declare `doap:license <https://spdx.org/licenses/MIT>` on both plugins in the `.ttl` files (`lv2lint` checks it).
+- License: GPL-2.0-or-later (MIT chosen 16 October 2026, changed 20 October 2026). `LICENSE` holds the GPL version 2 text; files carry the line `Copyright (c) 2026 Alejandro Bustos`. Put `SPDX-License-Identifier: GPL-2.0-or-later` at the top of every source file, header, Makefile and `.ttl` file, and declare `doap:license <https://spdx.org/licenses/GPL-2.0-or-later>` on both plugins in the `.ttl` files (`lv2lint` checks it).
 - Makefile, both descriptors, both `.ttl` files with **the full port list of section 3**, `ports.hpp`, and the `ttl_check` test.
 - Discipline passes input to output and outputs silence on Send. Return claims its slot.
 - **Done when:** `make`, `make install DESTDIR=…` and `lv2lint` are clean, and both plugins load in jalv and in Ingen under WSL. Tag `v0.0.1`, so Peepo can wire its build step early.

@@ -1,4 +1,4 @@
-# SPDX-License-Identifier: MIT
+# SPDX-License-Identifier: GPL-2.0-or-later
 # Copyright (c) 2026 Alejandro Bustos
 @prefix lv2: <http://lv2plug.in/ns/lv2core#> .
 @prefix doap: <http://usefulinc.com/ns/doap#> .
@@ -14,7 +14,7 @@
 <https://github.com/ABustos2606/discipline#return>
     a lv2:Plugin, lv2:UtilityPlugin ;
     doap:name "Discipline Return" ;
-    doap:license <https://spdx.org/licenses/MIT> ;
+    doap:license <https://spdx.org/licenses/GPL-2.0-or-later> ;
     doap:maintainer [ foaf:name "Alejandro Bustos" ; foaf:homepage <https://github.com/ABustos2606> ] ;
     doap:homepage <https://github.com/ABustos2606/discipline> ;
     rdfs:comment "Brings the repeats from Discipline Send back in, when Discipline Modifier is Outside. One per patch; both plugins must run in the same host process." ;
